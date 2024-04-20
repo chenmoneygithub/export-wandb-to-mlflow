@@ -1,2 +1,16 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "export-wandb-to-mlflow"
+version = "0.0.1.dev0"
+description = "Tools to migrate wandb projects to mlflow."
+readme = "README.rst"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src", "src.*"]
+
 [tool.ruff]
 line-length = 100

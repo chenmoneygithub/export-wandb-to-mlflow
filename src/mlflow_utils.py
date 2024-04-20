@@ -3,22 +3,29 @@ import uuid
 from contextlib import contextmanager
 
 
-def set_mlflow_experiment(wandb_project):
+def set_mlflow_experiment(wandb_project, mlflow_experiment_name=None):
     """Set MLflow experiment based on the Wandb project.
 
-    Create or reuse an MLflow experiment based on the Wandb project. Basically wandb project with
-    name "my-wandb-project" will become MLflow experiment "/my-wandb-project" (prefixed with "/").
-    If an MLflow experiment with the same name already exists, and it is created from wandb project,
-    as indicated by the tag `migrate_from_wandb_project`, we reuse it. Otherwise, we create a new
-    MLflow experiment with a random suffix.
+    Create or reuse an MLflow experiment based on the Wandb project. If `mlflow_experiment_name` is
+    set, an MLflow experiment of name `mlflow_experiment_name` will be created. Otherwise we will
+    create MLflow experiment "/my-wandb-project" (prefixed with "/") to match wandb project with
+    name "my-wandb-project". If an MLflow experiment with the same name already exists, and it is
+    created from wandb project, as indicated by the tag `migrate_from_wandb_project`, we reuse it.
+    Otherwise, we create a new MLflow experiment with a random suffix.
 
     When a new MLflow experiment is created, it will be tagged with `migrate_from_wandb_project`
     and the wandb project's name in tag `wandb_project_name`.
 
     Args:
         wandb_project (wandb.sdk.wandb_project.Project): Wandb project object.
+        mlflow_experiment_name (str, optional): The user select name for the MLflow experiment.
+            if None, we will automatically find a name based on the wandb project name.
     """
     wandb_project_name = wandb_project.name
+
+    if mlflow_experiment_name:
+        mlflow.set_experiment(mlflow_experiment_name)
+        return
 
     # Note that in Databricks workspace, MLflow experiment name is prefixed with `/`.
     mlflow_experiment = mlflow.get_experiment_by_name(f"/{wandb_project_name}")
@@ -31,11 +38,11 @@ def set_mlflow_experiment(wandb_project):
             # migration, so we set the experiment name with a random suffix.
             mlflow.set_experiment(f"/{wandb_project_name}_{uuid.uuid4().hex[:6]}")
             mlflow.set_experiment_tag("migrate_from_wandb_project", "True")
-            mlflow.set_experiment_tag("wandb_project_name", wandb_project_name.name)
+            mlflow.set_experiment_tag("wandb_project_name", wandb_project_name)
     else:
         mlflow.set_experiment(f"/{wandb_project_name}")
         mlflow.set_experiment_tag("migrate_from_wandb_project", "True")
-        mlflow.set_experiment_tag("wandb_project_name", wandb_project_name.name)
+        mlflow.set_experiment_tag("wandb_project_name", wandb_project_name)
 
 
 @contextmanager

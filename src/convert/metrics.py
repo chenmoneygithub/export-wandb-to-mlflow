@@ -12,6 +12,7 @@ def convert_wandb_experiment_metrics_to_mlflow(wandb_run, mlflow_client, mlflow_
         timestamp = int(row["_timestamp"] * 1000)
         step = int(row["_step"])
         current_row_metrics = []
+        
         for k, v in row.items():
             if k not in EXCLUDE_METRICS and isinstance(v, (int, float)):
                 # Metrics must be either int or float.
