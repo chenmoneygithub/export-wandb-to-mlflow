@@ -1,6 +1,7 @@
-import mlflow
 import uuid
 from contextlib import contextmanager
+
+import mlflow
 
 
 def set_mlflow_experiment(wandb_project, mlflow_experiment_name=None):
@@ -46,7 +47,7 @@ def set_mlflow_experiment(wandb_project, mlflow_experiment_name=None):
 
 
 @contextmanager
-def create_mlflow_parent_run(wandb_run, group_to_run_id=None):
+def create_mlflow_parent_run(wandb_run, group_to_run_id=None, enable=False):
     """Create MLflow parent run based on Wandb run's group.
 
     This function function is a context manager that creates an MLflow parent run based on the
@@ -54,7 +55,7 @@ def create_mlflow_parent_run(wandb_run, group_to_run_id=None):
     exists for the given `group`, we resume it. The parent run is created with the same name as the
     wandb group.
     """
-    if not hasattr(wandb_run, "group"):
+    if not enable or not hasattr(wandb_run, "group"):
         yield None
     else:
         group = wandb_run.group

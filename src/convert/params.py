@@ -1,4 +1,5 @@
 import json
+
 import mlflow
 
 
@@ -15,4 +16,4 @@ def convert_wandb_config_to_mlflow_params(wandb_run):
     converted_config = {
         k: json.dumps(v) if isinstance(v, dict) else v for k, v in wandb_run.config.items()
     }
-    mlflow.log_params(converted_config)
+    mlflow.log_params(converted_config, synchronous=False)

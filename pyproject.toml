@@ -4,13 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "export-wandb-to-mlflow"
+authors = [{ name = "Chen Qian", email = "chen.qian@databricks.com" }]
+requires-python = ">=3.8"
 version = "0.0.1.dev0"
 description = "Tools to migrate wandb projects to mlflow."
 readme = "README.rst"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["src", "src.*"]
+where = ["src"]
+include = ["*"]
+exclude = ["tests", "tests.*"]
+
+[project.scripts]
+w2m = "main:main"
 
 [tool.ruff]
 line-length = 100

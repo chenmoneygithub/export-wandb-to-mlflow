@@ -1,10 +1,9 @@
 import re
-import wandb
-import mlflow
 from functools import partial
-from src.config import MLFLOW_MAXIMUM_METRICS_PER_BATCH
 
 from mlflow.entities import Metric
+
+from config import MLFLOW_MAXIMUM_METRICS_PER_BATCH
 
 
 def _convert_bytes_to_mb(row, key):
@@ -84,10 +83,10 @@ def convert_wandb_system_metrics_to_mlflow(wandb_run, mlflow_client, mlflow_run_
         metrics_count = len(mlflow_system_metrics) + len(gpu_metrics) + len(non_gpu_metrics)
         if metrics_count >= MLFLOW_MAXIMUM_METRICS_PER_BATCH:
             # Trigger logging when we reach the maximum metrics allowed per batch.
-            mlflow_client.log_batch(mlflow_run_id, metrics=mlflow_system_metrics)
+            mlflow_client.log_batch(mlflow_run_id, metrics=mlflow_system_metrics, synchronous=False)
             mlflow_system_metrics = gpu_metrics + non_gpu_metrics
         else:
             mlflow_system_metrics.extend(gpu_metrics + non_gpu_metrics)
 
     # Clear up leftovers.
-    mlflow_client.log_batch(mlflow_run_id, metrics=mlflow_system_metrics)
+    mlflow_client.log_batch(mlflow_run_id, metrics=mlflow_system_metrics, synchronous=False)
