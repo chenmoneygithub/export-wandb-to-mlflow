@@ -1,4 +1,5 @@
 wandb
+absl-py==2.1.0
 git+https://github.com/chenmoneygithub/mlflow.git@fast-async
 ruff==0.2.1
 pre-commit==2.20.0

@@ -9,6 +9,7 @@ requires-python = ">=3.8"
 version = "0.0.1.dev0"
 description = "Tools to migrate wandb projects to mlflow."
 readme = "README.rst"
+dependencies = ["mlflow>=2.9.0", "wandb>=0.16.0", "absl-py==2.1.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
