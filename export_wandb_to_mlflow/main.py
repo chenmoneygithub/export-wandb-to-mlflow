@@ -65,9 +65,6 @@ def run(wandb_project_name, mlflow_experiment_name=None, verbose=False, use_nest
     os.environ["MLFLOW_VERBOSE"] = str(verbose)
     project_name = wandb_project_name
 
-    wandb.login()
-    mlflow.login()
-
     api = wandb.Api()
 
     wandb_project = api.project(name=project_name, entity="mosaic-ml")
@@ -117,4 +114,6 @@ def main():
 
 
 if __name__ == "__main__":
+    wandb.login()
+    mlflow.login()
     main()
