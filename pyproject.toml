@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "export-wandb-to-mlflow"
+name = "export_wandb_to_mlflow"
 authors = [{ name = "Chen Qian", email = "chen.qian@databricks.com" }]
 requires-python = ">=3.8"
 version = "0.0.1.dev0"
@@ -17,7 +17,7 @@ include = ["*"]
 exclude = ["tests", "tests.*"]
 
 [project.scripts]
-w2m = "main:main"
+w2m = "export_wandb_to_mlflow.main:main"
 
 [tool.ruff]
 line-length = 100

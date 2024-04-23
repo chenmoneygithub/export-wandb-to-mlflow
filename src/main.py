@@ -83,7 +83,7 @@ def run(_):
         with create_mlflow_parent_run(run, group_to_run_id, FLAGS.use_nested_run) as parent_run:
             with mlflow.start_run(run_name=run.name, nested=parent_run is not None) as mlflow_run:
                 logging.info(f"Processing run: {run.name}")
-                if hasattr(run, "group"):
+                if getattr(run, "group", None):
                     # Add the wandb group to the mlflow run as a tag.
                     mlflow.set_tag("run_group", run.group)
                 mlflow.set_tag("wandb_run_name", run.name)
