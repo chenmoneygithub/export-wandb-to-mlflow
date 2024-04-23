@@ -3,7 +3,7 @@ from functools import partial
 
 from mlflow.entities import Metric
 
-from config import MLFLOW_MAXIMUM_METRICS_PER_BATCH
+from export_wandb_to_mlflow.config import MLFLOW_MAXIMUM_METRICS_PER_BATCH
 
 
 def _convert_bytes_to_mb(row, key):

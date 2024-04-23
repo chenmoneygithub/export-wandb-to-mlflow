@@ -7,10 +7,10 @@ import wandb
 from absl import app, flags, logging
 from mlflow.tracking import _get_store
 
-from convert.metrics import convert_wandb_experiment_metrics_to_mlflow
-from convert.params import convert_wandb_config_to_mlflow_params
-from convert.system_metrics import convert_wandb_system_metrics_to_mlflow
-from mlflow_utils import create_mlflow_parent_run, set_mlflow_experiment
+from export_wandb_to_mlflow.convert.metrics import convert_wandb_experiment_metrics_to_mlflow
+from export_wandb_to_mlflow.convert.params import convert_wandb_config_to_mlflow_params
+from export_wandb_to_mlflow.convert.system_metrics import convert_wandb_system_metrics_to_mlflow
+from export_wandb_to_mlflow.mlflow_utils import create_mlflow_parent_run, set_mlflow_experiment
 
 flags.DEFINE_string(
     "wandb_project_name",
@@ -59,11 +59,11 @@ def logging_async_pool_info(stop_event):
     thread.start()
 
 
-def run(_):
+def run(wandb_project_name, mlflow_experiment_name=None, verbose=False, use_nested_run=False):
     start_time = time.time()
 
-    os.environ["MLFLOW_VERBOSE"] = str(FLAGS.verbose)
-    project_name = FLAGS.wandb_project_name
+    os.environ["MLFLOW_VERBOSE"] = str(verbose)
+    project_name = wandb_project_name
 
     wandb.login()
     mlflow.login()
@@ -71,7 +71,7 @@ def run(_):
     api = wandb.Api()
 
     wandb_project = api.project(name=project_name, entity="mosaic-ml")
-    set_mlflow_experiment(wandb_project, FLAGS.mlflow_experiment_name)
+    set_mlflow_experiment(wandb_project, mlflow_experiment_name)
     runs = api.runs(path=f"mosaic-ml/{wandb_project.name}")
 
     group_to_run_id = {}
@@ -80,7 +80,7 @@ def run(_):
     logging_async_pool_info(async_pool_logging_stop_event)
 
     for run in runs:
-        with create_mlflow_parent_run(run, group_to_run_id, FLAGS.use_nested_run) as parent_run:
+        with create_mlflow_parent_run(run, group_to_run_id, use_nested_run) as parent_run:
             with mlflow.start_run(run_name=run.name, nested=parent_run is not None) as mlflow_run:
                 logging.info(f"Processing run: {run.name}")
                 if getattr(run, "group", None):
@@ -103,8 +103,17 @@ def run(_):
     logging.info(f"Migration of {project_name} completed in {end_time - start_time:.2f} seconds.")
 
 
+def launch(_):
+    run(
+        FLAGS.wandb_project_name,
+        FLAGS.mlflow_experiment_name,
+        FLAGS.verbose,
+        FLAGS.use_nested_run,
+    )
+
+
 def main():
-    app.run(run)
+    app.run(launch)
 
 
 if __name__ == "__main__":
