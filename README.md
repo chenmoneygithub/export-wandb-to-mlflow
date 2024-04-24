@@ -10,9 +10,10 @@ To use the tool, first clone and install the package:
 
 ```bash
 git clone https://github.com/chenmoneygithub/export-wandb-to-mlflow.git
-cd export-wandb-to-mlflow.git
+cd export-wandb-to-mlflow
 pip install -e "."
 ```
+Note: if `pip install -e "."` doesn't work, try upgrading to the latest version.
 
 Then run to kick off the data migration:
 
