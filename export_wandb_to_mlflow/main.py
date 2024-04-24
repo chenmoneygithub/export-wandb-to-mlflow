@@ -7,10 +7,14 @@ import wandb
 from absl import app, flags, logging
 from mlflow.tracking import _get_store
 
-from export_wandb_to_mlflow.convert.metrics import convert_wandb_experiment_metrics_to_mlflow
-from export_wandb_to_mlflow.convert.params import convert_wandb_config_to_mlflow_params
-from export_wandb_to_mlflow.convert.system_metrics import convert_wandb_system_metrics_to_mlflow
-from export_wandb_to_mlflow.mlflow_utils import create_mlflow_parent_run, set_mlflow_experiment
+from export_wandb_to_mlflow.convert.metrics import \
+    convert_wandb_experiment_metrics_to_mlflow
+from export_wandb_to_mlflow.convert.params import \
+    convert_wandb_config_to_mlflow_params
+from export_wandb_to_mlflow.convert.system_metrics import \
+    convert_wandb_system_metrics_to_mlflow
+from export_wandb_to_mlflow.mlflow_utils import (create_mlflow_parent_run,
+                                                 set_mlflow_experiment)
 
 flags.DEFINE_string(
     "wandb_project_name",
@@ -36,7 +40,20 @@ flags.DEFINE_bool(
     "Whether to use nested run to represent wandb group.",
 )
 
+
 FLAGS = flags.FLAGS
+
+
+def setup_logging(log_dir):
+    if log_dir:
+        if not os.path.exists(FLAGS.log_dir):
+            os.makedirs(FLAGS.log_dir)
+        logging.get_absl_handler().use_absl_log_file("export_wandb_to_mlflow", FLAGS.log_dir)
+
+    # Set verbosity level (defaults to INFO)
+    logging.set_verbosity(logging.INFO)
+    # Set the stderr threshold (to see all logs in the terminal)
+    logging.set_stderrthreshold(logging.INFO)
 
 
 def logging_async_pool_info(stop_event):
@@ -59,7 +76,14 @@ def logging_async_pool_info(stop_event):
     thread.start()
 
 
-def run(wandb_project_name, mlflow_experiment_name=None, verbose=False, use_nested_run=False):
+def run(
+    wandb_project_name,
+    mlflow_experiment_name=None,
+    verbose=False,
+    use_nested_run=False,
+    log_dir=None,
+):
+    setup_logging(log_dir)
     start_time = time.time()
 
     os.environ["MLFLOW_VERBOSE"] = str(verbose)
@@ -77,9 +101,13 @@ def run(wandb_project_name, mlflow_experiment_name=None, verbose=False, use_nest
     logging_async_pool_info(async_pool_logging_stop_event)
 
     for run in runs:
+        logging.info(f"Starting processing wandb run: {run.name}.")
         with create_mlflow_parent_run(run, group_to_run_id, use_nested_run) as parent_run:
             with mlflow.start_run(run_name=run.name, nested=parent_run is not None) as mlflow_run:
-                logging.info(f"Processing run: {run.name}")
+                logging.info(
+                    f"Created Mlflow run: {mlflow_run.info.run_name} with id "
+                    f"{mlflow_run.info.run_id}."
+                )
                 if getattr(run, "group", None):
                     # Add the wandb group to the mlflow run as a tag.
                     mlflow.set_tag("run_group", run.group)
@@ -88,12 +116,18 @@ def run(wandb_project_name, mlflow_experiment_name=None, verbose=False, use_nest
                 convert_wandb_config_to_mlflow_params(run)
                 convert_wandb_system_metrics_to_mlflow(run, client, mlflow_run.info.run_id)
                 convert_wandb_experiment_metrics_to_mlflow(run, client, mlflow_run.info.run_id)
-                logging.info(f"Finished processing run: {run.name}")
 
-    logging.info("Waiting for all data to be logged, please be patient, patient and patient...")
-    # Clear the async logging queue per 5 projects to avoid dead threadpool.
-    mlflow.flush_async_logging()
+                logging.info(
+                    "Done processing wandb data, now waiting for all data to be logged to MLflow "
+                    f"for run: {run.name}."
+                )
+                # Clear the async logging queue per 5 projects to avoid dead threadpool.
+                mlflow.flush_async_logging()
+                # Set a tag to indicate that the migration is complete.
+                mlflow.set_tag("wandb_migration_complete", True)
+                logging.info(f"Finished processing run: {run.name}! Moving to the next run...")
 
+    # Stop logging the async pool info.
     async_pool_logging_stop_event.set()
 
     end_time = time.time()
@@ -106,14 +140,15 @@ def launch(_):
         FLAGS.mlflow_experiment_name,
         FLAGS.verbose,
         FLAGS.use_nested_run,
+        FLAGS.log_dir,
     )
 
 
 def main():
+    wandb.login()
+    mlflow.login()
     app.run(launch)
 
 
 if __name__ == "__main__":
-    wandb.login()
-    mlflow.login()
     main()

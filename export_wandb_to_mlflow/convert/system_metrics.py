@@ -1,5 +1,6 @@
 import re
 from functools import partial
+from math import isnan
 
 from mlflow.entities import Metric
 
@@ -41,7 +42,7 @@ def _convert_gpu_metrics_to_mlflow(row, step):
             # Check if the current metrics matches the GPU metrics pattern.
             match_result = re.search(wandb_key, k)
 
-            if match_result and v is not None:
+            if match_result and v is not None and not isnan(v):
                 gpu_index = match_result.group(1)
                 mlflow_key = mlflow_key.format(i=gpu_index)
                 if "memoryAllocatedBytes" in wandb_key:
