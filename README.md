@@ -22,11 +22,15 @@ w2m --wandb_project_name="{your-wandb-project-name}" [Options]
 
 Available options are listed below:
 
-| Option                 | Type   | Explanation                                                                                   |
-| ---------------------- | ------ | --------------------------------------------------------------------------------------------- |
-| mlflow_experiment_name | String | Use the designated name as the MLflow experiment name, instead of automatically creating one. |
-| verbose                | Bool   | If verbose logging is enabled.                                                                |
-| use_nested_run         | Bool   | If using nested MLflow run to represent wandb group.                                          |
+| Option                 | Type   | Explanation                                                                                                                                                                       |
+| ---------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| mlflow_experiment_name | String | Use the designated name as the MLflow experiment name, instead of automatically creating one.                                                                                     |
+| verbose                | Bool   | If verbose logging is enabled.                                                                                                                                                    |
+| resume_from_crash      | Bool   | If True, the job will be run in resumption mode: half-complete runs will be deleted and re-migrated, finished runs will be skipped. This is useful when the previous run crashed. |
+| use_nested_run         | Bool   | If using nested MLflow run to represent wandb group.                                                                                                                              |
+| log_dir                | Str    | If set, the logging will be written to the `log_dir` as well as the stdout.                                                                                                       |
+| wandb_run_names        | List   | If set, only runs specified by `wandb_run_names` are migrated.                                                                                                                    |
+| exclude_metrics        | List   | Metrics matching patterns in `exclude_metrics` will not be migrated                                                                                                               |
 
 If `mlflow_experiment_name` is not set, an MLflow experiment of the same name as WandB experiment will be created, and all MLflow
 runs will be created using the corresponding WandB runs' names. If WandB runs are grouped, the group name will be logged to MLflow

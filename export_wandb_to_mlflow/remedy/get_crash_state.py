@@ -3,10 +3,17 @@ from absl import logging
 
 
 class CrashHandler:
+    """Class that handles the crash state of the migration job.
+
+    Args:
+        wandb_project_name (str): The name of the Wandb project.
+    """
+
     def __init__(self, wandb_project_name):
         self.wandb_project_name = wandb_project_name
 
     def find_corresponding_mlflow_experiment(self):
+        """Get the corresponding MLflow experiment based on the Wandb project."""
         mlflow_experiment = mlflow.get_experiment_by_name(f"/{self.wandb_project_name}")
         if (
             mlflow_experiment is None
@@ -21,6 +28,11 @@ class CrashHandler:
         return mlflow_experiment
 
     def delete_crashed_runs_and_get_finished_runs(self):
+        """Delete the crashed runs and get the finished runs.
+
+        This method deletes the runs that are not finished due to the previous crash. It also
+        fetches already finished runs and store the information in `self.finished_wandb_run_ids`.
+        """
         mlflow_experiment = self.find_corresponding_mlflow_experiment()
 
         runs = mlflow.search_runs(experiment_ids=mlflow_experiment.experiment_id)
@@ -37,4 +49,4 @@ class CrashHandler:
                 )
                 mlflow.delete_run(run_id)
 
-        self.finished_wandb_run_id = finished_runs.loc[:, "tags.wandb_run_id"].tolist()
+        self.finished_wandb_run_ids = finished_runs.loc[:, "tags.wandb_run_id"].tolist()

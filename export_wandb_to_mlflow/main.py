@@ -130,7 +130,7 @@ def run(
         if wandb_run_names and run.name not in wandb_run_names:
             # Only migrate the runs specified in `wandb_run_names` if it is not empty.
             continue
-        if resume_from_crash and run.id in crash_handler.finished_wandb_run_id:
+        if resume_from_crash and run.id in crash_handler.finished_wandb_run_ids:
             # Skip the run that has been finished.
             logging.info(
                 f"Skipping wandb run {run.name} of id {run.id} because it's already done.'"
