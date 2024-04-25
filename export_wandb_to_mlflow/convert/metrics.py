@@ -2,7 +2,7 @@ from mlflow.entities import Metric
 
 from export_wandb_to_mlflow.config import MLFLOW_MAXIMUM_METRICS_PER_BATCH
 
-EXCLUDE_METRICS = ["_timestamp", "_step", "_run_time"]
+DEFAULT_EXCLUDE_METRICS = ["_timestamp", "_step", "_run_time"]
 
 
 def get_single_step_metrics(wandb_run):
@@ -24,17 +24,34 @@ def get_single_step_metrics(wandb_run):
     return single_non_none[single_non_none].index.tolist()
 
 
-def convert_wandb_experiment_metrics_to_mlflow(wandb_run, mlflow_client, mlflow_run_id):
+def convert_wandb_experiment_metrics_to_mlflow(
+    wandb_run,
+    mlflow_client,
+    mlflow_run_id,
+    exclude_metrics=None,
+):
+    """Convert Wandb experiment metrics to MLflow.
+
+    This function converts Wandb experiment metrics for the given `wandb_run` to MLflow experiment
+    metrics with the same metrics name. All logging happens asynchronously.
+
+    Args:
+        wandb_run (wandb.sdk.wandb_run.Run): The Wandb run object.
+        mlflow_client (mlflow.client.MlflowClient): The MLflow client.
+        mlflow_run_id (str): The MLflow run ID.
+        exclude_metrics (List[str]): The list of metrics to exclude from migration.
+    """
     metric_history = wandb_run.scan_history()
     mlflow_metrics = []
     single_step_metrics = get_single_step_metrics(wandb_run)
+    exclude_metrics = (exclude_metrics or []) + DEFAULT_EXCLUDE_METRICS
     for _, row in enumerate(metric_history):
         timestamp = int(row["_timestamp"] * 1000)
         step = int(row["_step"])
         current_row_metrics = []
 
         for k, v in row.items():
-            if k not in EXCLUDE_METRICS and isinstance(v, (int, float)):
+            if k not in exclude_metrics and isinstance(v, (int, float)):
                 # Metrics must be either int or float.
                 # There are other types such as str, dict or None, we should skip them.
                 if k in single_step_metrics:
