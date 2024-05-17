@@ -41,7 +41,7 @@ flags.DEFINE_list(
     "wandb_run_names",
     [],
     "The list of run names to migrate to MLflow. If specified, only the runs with the given names "
-    "will be migrated, otherwise all runs in the project will be migrated.",
+    "will be migrated, otherwise all runs in the wandb project will be migrated.",
 )
 
 flags.DEFINE_list(
