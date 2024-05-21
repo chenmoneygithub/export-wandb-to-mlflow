@@ -10,7 +10,11 @@ from mlflow.tracking import _get_store
 from export_wandb_to_mlflow.convert.metrics import convert_wandb_experiment_metrics_to_mlflow
 from export_wandb_to_mlflow.convert.params import convert_wandb_config_to_mlflow_params
 from export_wandb_to_mlflow.convert.system_metrics import convert_wandb_system_metrics_to_mlflow
-from export_wandb_to_mlflow.mlflow_utils import create_mlflow_parent_run, set_mlflow_experiment
+from export_wandb_to_mlflow.mlflow_utils import (
+    set_mlflow_experiment,
+    set_mlflow_tags,
+    start_mlflow_run,
+)
 from export_wandb_to_mlflow.remedy.get_crash_state import CrashHandler
 
 flags.DEFINE_string(
@@ -58,11 +62,26 @@ flags.DEFINE_bool(
     "the run crashing in the middle, and migrate all other runs.",
 )
 
+flags.DEFINE_bool(
+    "dry_run",
+    False,
+    "If True, the script will write wandb data to files instead of MLflow server. This is useful "
+    "when you want to keep the data locally before migrating to MLflow.",
+)
+
+flags.DEFINE_string(
+    "dry_run_save_dir",
+    None,
+    "The directory path to save the data in dry run mode. If None, the current directory will be "
+    "used.",
+)
+
 
 FLAGS = flags.FLAGS
 
 
-def setup_logging(log_dir):
+def _setup_absl_logging(log_dir):
+    """Configure absl logging."""
     if log_dir:
         if not os.path.exists(FLAGS.log_dir):
             os.makedirs(FLAGS.log_dir)
@@ -74,7 +93,7 @@ def setup_logging(log_dir):
     logging.set_stderrthreshold(logging.INFO)
 
 
-def logging_async_pool_info(stop_event):
+def _logging_async_pool_info(stop_event):
     def logging_func(stop_event):
         store = _get_store()
         async_queue = store._async_logging_queue
@@ -98,33 +117,42 @@ def run(
     wandb_project_name,
     mlflow_experiment_name=None,
     verbose=False,
-    use_nested_run=False,
     log_dir=None,
     wandb_run_names=None,
     exclude_metrics=None,
     resume_from_crash=False,
+    dry_run=False,
+    dry_run_save_dir=None,
 ):
-    setup_logging(log_dir)
+    _setup_absl_logging(log_dir)
     start_time = time.time()
 
     os.environ["MLFLOW_VERBOSE"] = str(verbose)
-    project_name = wandb_project_name
 
     api = wandb.Api()
 
-    wandb_project = api.project(name=project_name, entity="mosaic-ml")
+    wandb_project = api.project(name=wandb_project_name, entity="mosaic-ml")
+    mlflow_experiment = None
     if resume_from_crash:
-        crash_handler = CrashHandler(wandb_project_name)
+        crash_handler = CrashHandler(
+            wandb_project_name,
+            dry_run=dry_run,
+            dry_run_save_dir=dry_run_save_dir,
+        )
         crash_handler.delete_crashed_runs_and_get_finished_runs()
     else:
-        set_mlflow_experiment(wandb_project, mlflow_experiment_name)
+        mlflow_experiment = set_mlflow_experiment(
+            wandb_project_name,
+            mlflow_experiment_name,
+            dry_run=dry_run,
+            dry_run_save_dir=dry_run_save_dir,
+        )
 
     runs = api.runs(path=f"mosaic-ml/{wandb_project.name}")
 
-    group_to_run_id = {}
-
-    async_pool_logging_stop_event = threading.Event()
-    logging_async_pool_info(async_pool_logging_stop_event)
+    if not dry_run:
+        async_pool_logging_stop_event = threading.Event()
+        _logging_async_pool_info(async_pool_logging_stop_event)
 
     for run in runs:
         if wandb_run_names and run.name not in wandb_run_names:
@@ -138,64 +166,89 @@ def run(
             continue
 
         logging.info(f"Starting processing wandb run: {run.name}.")
-        with create_mlflow_parent_run(run, group_to_run_id, use_nested_run) as parent_run:
-            with mlflow.start_run(run_name=run.name, nested=parent_run is not None) as mlflow_run:
+        with start_mlflow_run(
+            run, dry_run=dry_run, dry_run_experiment_dir=mlflow_experiment
+        ) as mlflow_run:
+            if dry_run:
+                logging.info(
+                    f"Migrating wandb run {run.name} to MLflow in dry run mode. The saved data "
+                    f"is stored in {str(mlflow_run)}."
+                )
+            else:
                 logging.info(
                     f"Created Mlflow run: {mlflow_run.info.run_name} with id "
                     f"{mlflow_run.info.run_id}."
                 )
-                if getattr(run, "group", None):
-                    # Add the wandb group to the mlflow run as a tag.
-                    mlflow.set_tag("run_group", run.group)
-                mlflow.set_tags(
-                    {
-                        "wandb_run_name": run.name,
-                        "wandb_run_id": run.id,
-                    }
-                )
-                client = mlflow.MlflowClient()
-                convert_wandb_config_to_mlflow_params(run)
-                convert_wandb_system_metrics_to_mlflow(run, client, mlflow_run.info.run_id)
-                convert_wandb_experiment_metrics_to_mlflow(
-                    run,
-                    client,
-                    mlflow_run.info.run_id,
-                    exclude_metrics=exclude_metrics,
-                )
+            tags = {}
+            if getattr(run, "group", None):
+                # Add the wandb group to the mlflow run as a tag.
+                tags["run_group"] = run.group
 
-                logging.info(
-                    "Done processing wandb data, now waiting for all data to be logged to MLflow "
-                    f"for run: {run.name}."
-                )
+            tags["wandb_run_name"] = run.name
+            tags["wandb_run_id"] = run.id
+            set_mlflow_tags(tags, dry_run=dry_run, dry_run_save_dir=mlflow_run)
+
+            client = mlflow.MlflowClient()
+            convert_wandb_config_to_mlflow_params(run, dry_run=dry_run, dry_run_save_dir=mlflow_run)
+            convert_wandb_system_metrics_to_mlflow(
+                run,
+                client,
+                mlflow_run,
+                dry_run=dry_run,
+                dry_run_save_dir=mlflow_run,
+            )
+            convert_wandb_experiment_metrics_to_mlflow(
+                run,
+                client,
+                mlflow_run,
+                exclude_metrics=exclude_metrics,
+                dry_run=dry_run,
+                dry_run_save_dir=mlflow_run,
+            )
+
+            logging.info(
+                "Done processing wandb data, now waiting for all data to be logged to MLflow "
+                f"for run: {run.name}."
+            )
+            if not dry_run:
                 # Clear the async logging queue per 5 projects to avoid dead threadpool.
                 mlflow.flush_async_logging()
-                # Set a tag to indicate that the migration is complete.
-                mlflow.set_tag("wandb_migration_complete", True)
-                logging.info(f"Finished processing run: {run.name}! Moving to the next run...")
+            # Set a tag to indicate that the migration is complete.
+            set_mlflow_tags(
+                {"wandb_migration_complete": True},
+                dry_run=dry_run,
+                dry_run_save_dir=mlflow_run,
+            )
+            logging.info(f"Finished processing run: {run.name}! Moving to the next run...")
 
-    # Stop logging the async pool info.
-    async_pool_logging_stop_event.set()
+    if not dry_run:
+        # Stop logging the async pool info.
+        async_pool_logging_stop_event.set()
 
     end_time = time.time()
-    logging.info(f"Migration of {project_name} completed in {end_time - start_time:.2f} seconds.")
+    logging.info(
+        f"Migration of {wandb_project_name} completed in {end_time - start_time:.2f} seconds."
+    )
 
 
 def launch(_):
+    if not FLAGS.dry_run:
+        mlflow.login()
     run(
         FLAGS.wandb_project_name,
         FLAGS.mlflow_experiment_name,
         FLAGS.verbose,
-        FLAGS.use_nested_run,
         FLAGS.log_dir,
         FLAGS.wandb_run_names,
         FLAGS.exclude_metrics,
         FLAGS.resume_from_crash,
+        FLAGS.dry_run,
+        FLAGS.dry_run_save_dir,
     )
 
 
 def main():
     wandb.login()
-    mlflow.login()
     app.run(launch)
 
 

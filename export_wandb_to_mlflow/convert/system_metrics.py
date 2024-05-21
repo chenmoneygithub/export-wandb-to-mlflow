@@ -5,6 +5,7 @@ from math import isnan
 from mlflow.entities import Metric
 
 from export_wandb_to_mlflow.config import MLFLOW_MAXIMUM_METRICS_PER_BATCH
+from export_wandb_to_mlflow.dry_run_utils import log_metrics_dry_run
 
 
 def _convert_bytes_to_mb(row, key):
@@ -56,7 +57,13 @@ def _convert_gpu_metrics_to_mlflow(row, step):
     return metrics
 
 
-def convert_wandb_system_metrics_to_mlflow(wandb_run, mlflow_client, mlflow_run_id):
+def convert_wandb_system_metrics_to_mlflow(
+    wandb_run,
+    mlflow_client,
+    mlflow_run,
+    dry_run=False,
+    dry_run_save_dir=None,
+):
     """Convert Wandb system metrics to MLflow.
 
     This function converts Wandb system metrics for the given `wandb_run` to MLflow system metrics,
@@ -67,9 +74,16 @@ def convert_wandb_system_metrics_to_mlflow(wandb_run, mlflow_client, mlflow_run_
         mlflow_client (mlflow.client.MlflowClient): The MLflow client.
         mlflow_run_id (str): The MLflow run ID.
     """
+    if not dry_run:
+        mlflow_run_id = mlflow_run.info.run_id
     wandb_system_metrics = wandb_run.history(stream="system")
 
     mlflow_system_metrics = []
+    batch_count = 0
+
+    if dry_run:
+        system_metrics_path = dry_run_save_dir / "system_metrics"
+        system_metrics_path.mkdir(parents=True, exist_ok=True)
 
     for index, row in wandb_system_metrics.iterrows():
         gpu_metrics = _convert_gpu_metrics_to_mlflow(row, step=index)
@@ -83,10 +97,27 @@ def convert_wandb_system_metrics_to_mlflow(wandb_run, mlflow_client, mlflow_run_
         metrics_count = len(mlflow_system_metrics) + len(gpu_metrics) + len(non_gpu_metrics)
         if metrics_count >= MLFLOW_MAXIMUM_METRICS_PER_BATCH:
             # Trigger logging when we reach the maximum metrics allowed per batch.
-            mlflow_client.log_batch(mlflow_run_id, metrics=mlflow_system_metrics, synchronous=False)
+            if dry_run:
+                log_metrics_dry_run(
+                    mlflow_system_metrics,
+                    system_metrics_path,
+                    index=batch_count,
+                )
+            else:
+                mlflow_client.log_batch(
+                    mlflow_run_id, metrics=mlflow_system_metrics, synchronous=False
+                )
+            batch_count += 1
             mlflow_system_metrics = gpu_metrics + non_gpu_metrics
         else:
             mlflow_system_metrics.extend(gpu_metrics + non_gpu_metrics)
 
     # Clear up leftovers.
-    mlflow_client.log_batch(mlflow_run_id, metrics=mlflow_system_metrics, synchronous=False)
+    if dry_run:
+        log_metrics_dry_run(
+            mlflow_system_metrics,
+            system_metrics_path,
+            index=batch_count,
+        )
+    else:
+        mlflow_client.log_batch(mlflow_run_id, metrics=mlflow_system_metrics, synchronous=False)
