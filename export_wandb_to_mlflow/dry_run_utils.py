@@ -68,5 +68,6 @@ def read_tags(tag_path):
     with tag_path.open(mode="r", newline="") as file:
         reader = csv.reader(file, delimiter=",")
         for row in reader:
-            tags[row[0]] = row[1]
+            # Strip out the leading and trailing spaces.
+            tags[row[0]] = row[1].strip()
     return tags

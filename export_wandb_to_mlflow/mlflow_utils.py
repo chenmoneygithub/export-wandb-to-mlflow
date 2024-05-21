@@ -7,9 +7,8 @@ import mlflow
 from export_wandb_to_mlflow.dry_run_utils import set_tags_dry_run
 
 
-def _set_mlflow_experiment_on_tracking_server(wandb_project, mlflow_experiment_name=None):
+def _set_mlflow_experiment_on_tracking_server(wandb_project_name, mlflow_experiment_name=None):
     """Set MLflow experiment on the tracking server."""
-    wandb_project_name = wandb_project.name
     mlflow_experiment_name = mlflow_experiment_name or wandb_project_name
 
     # Note that in Databricks workspace, MLflow experiment name is prefixed with `/`.
@@ -111,7 +110,7 @@ def start_mlflow_run(wandb_run, dry_run=False, dry_run_experiment_dir=None):
         An MLflow run object or a directory path in dry run mode.
     """
     if not dry_run:
-        with mlflow.start_run(wandb_run.name) as run:
+        with mlflow.start_run(run_name=wandb_run.name) as run:
             yield run
 
     else:

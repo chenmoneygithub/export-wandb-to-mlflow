@@ -139,6 +139,7 @@ def run(
             dry_run=dry_run,
             dry_run_save_dir=dry_run_save_dir,
         )
+        mlflow_experiment = crash_handler.mlflow_experiment
         crash_handler.delete_crashed_runs_and_get_finished_runs()
     else:
         mlflow_experiment = set_mlflow_experiment(
