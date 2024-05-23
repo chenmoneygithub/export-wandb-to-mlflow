@@ -1,7 +1,7 @@
+import shutil
 from pathlib import Path
 
 import mlflow
-import shutil
 from absl import logging
 
 from export_wandb_to_mlflow.dry_run_utils import read_tags
@@ -98,5 +98,6 @@ class CrashHandler:
                         f"Deleting run {run_id} because the previous migration did not finish."
                     )
                     mlflow.delete_run(run_id)
-
-            self.finished_wandb_run_ids = finished_runs.loc[:, "tags.wandb_run_id"].tolist()
+            self.finished_wandb_run_ids = (
+                [] if finished_runs.empty else finished_runs.loc[:, "tags.wandb_run_id"].tolist()
+            )

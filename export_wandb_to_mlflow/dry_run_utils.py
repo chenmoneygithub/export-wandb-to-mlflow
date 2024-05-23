@@ -2,6 +2,10 @@
 
 import csv
 import json
+import os
+from pathlib import Path
+
+from mlflow.entities import Metric
 
 
 def log_params_dry_run(params, dry_run_save_dir):
@@ -19,7 +23,7 @@ def log_params_dry_run(params, dry_run_save_dir):
         json.dump(params, f)
 
 
-def log_metrics_dry_run(metrics, dry_run_save_dir, index=0):
+def log_metrics_dry_run(metrics, dry_run_save_dir, file_handlers):
     """Log metrics to a file in dry run mode.
 
     This function logs the metrics to a file in dry run mode. The file is saved in the directory
@@ -28,11 +32,17 @@ def log_metrics_dry_run(metrics, dry_run_save_dir, index=0):
     Args:
         metrics (List[mlflow.entities.Metric]): The metrics to be logged.
         dry_run_save_dir (pathlib.Path): The directory to save the metrics.
+        file_handlers (Dict[str, File]): A dictionary containing file handlers for each metric file.
     """
-    file_path = dry_run_save_dir / f"metrics_batch_{index}.csv"
-    with file_path.open(mode="a") as f:
-        for metric in metrics:
-            f.write(f"{metric.key}, {metric.value}, {metric.timestamp}, {metric.step}\n")
+    for metric in metrics:
+        metric_path = dry_run_save_dir / f"{metric.key}.csv"
+        if str(metric_path) not in file_handlers:
+            # Haven't create this metric file yet.
+            metric_path.parent.mkdir(parents=True, exist_ok=True)
+            file_handlers[str(metric_path)] = metric_path.open(mode="a")
+        file_handlers[str(metric_path)].write(
+            f"{metric.value}, {metric.timestamp}, {metric.step}\n"
+        )
 
 
 def set_tags_dry_run(tags, dry_run_save_dir):
@@ -71,3 +81,74 @@ def read_tags(tag_path):
             # Strip out the leading and trailing spaces.
             tags[row[0]] = row[1].strip()
     return tags
+
+
+class RunReadHandler:
+    def __init__(self, run_path):
+        self.run_path = run_path
+
+        self._tags_path = run_path / "tags.csv"
+        self.tags = self.read_tags()
+        self.id = self.tags["wandb_run_id"]
+        self.name = self.tags["wandb_run_name"]
+        if "run_group" in self.tags:
+            self.group = self.tags["run_group"]
+
+        self._metrics_path = run_path / "metrics"
+        self._system_metrics_path = run_path / "system_metrics"
+        self._params_path = run_path / "params.json"
+
+    def read_params(self):
+        """Read Mlflow parameters from a file.
+
+        This function reads parameters from a file and returns them as a dictionary.
+
+        Returns:
+            A dict containing mlflow parameters.
+        """
+        params = {}
+        with self._params_path.open(mode="r") as file:
+            params = json.load(file)
+        return params
+
+    def read_tags(self):
+        return read_tags(self._tags_path)
+
+    def read_metrics(self):
+        """Read metrics and return a iterable generator of metrics."""
+        yield from self._read_metrics(self._metrics_path)
+
+    def read_system_metrics(self):
+        """Read system metrics and return a iterable generator."""
+        yield from self._read_metrics(self._system_metrics_path)
+
+    def _read_metrics(self, metrics_path):
+        """Read Mlflow metrics from a file.
+
+        This function reads metrics from a file and returns them as a generator of Metric objects.
+        Users can iterate over the generator to get the metrics.
+
+        Args:
+            metrics_path (pathlib.Path): The path to the directory containing the metrics.
+
+        Returns:
+            A generator of List of `mlflow.entities.Metric`.
+        """
+
+        for root, dirs, files in os.walk(metrics_path):
+            for file in files:
+                if not file.endswith(".csv"):
+                    continue
+
+                csv_path = Path(os.path.join(root, file))
+                relative_path = csv_path.relative_to(Path(metrics_path))
+                key = os.path.splitext(relative_path)[0]
+                metrics = []
+                with csv_path.open(mode="r", newline="") as file:
+                    reader = csv.reader(file, delimiter=",")
+                    for row in reader:
+                        value = float(row[0]) if ("." in row[0] or "e" in row[0]) else int(row[0])
+                        timestamp = int(row[1].strip())
+                        step = int(row[2].strip())
+                        metrics.append(Metric(key, value, timestamp, step))
+                yield metrics

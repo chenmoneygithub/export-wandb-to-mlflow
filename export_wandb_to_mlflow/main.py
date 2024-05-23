@@ -1,15 +1,17 @@
 import os
 import threading
 import time
+from pathlib import Path
 
 import mlflow
 import wandb
 from absl import app, flags, logging
 from mlflow.tracking import _get_store
 
-from export_wandb_to_mlflow.convert.metrics import convert_wandb_experiment_metrics_to_mlflow
+from export_wandb_to_mlflow.convert.metrics import convert_wandb_metrics_to_mlflow
 from export_wandb_to_mlflow.convert.params import convert_wandb_config_to_mlflow_params
 from export_wandb_to_mlflow.convert.system_metrics import convert_wandb_system_metrics_to_mlflow
+from export_wandb_to_mlflow.dry_run_utils import RunReadHandler
 from export_wandb_to_mlflow.mlflow_utils import (
     set_mlflow_experiment,
     set_mlflow_tags,
@@ -69,6 +71,13 @@ flags.DEFINE_bool(
     "when you want to keep the data locally before migrating to MLflow.",
 )
 
+flags.DEFINE_bool(
+    "resume_from_dry_run",
+    False,
+    "If True, the script will read the data from the dry run directory and migrate it to MLflow."
+    "This is useful when you ran the script in dry run mode before to save data to some disk.",
+)
+
 flags.DEFINE_string(
     "dry_run_save_dir",
     None,
@@ -113,6 +122,24 @@ def _logging_async_pool_info(stop_event):
     thread.start()
 
 
+def _validate_flags(
+    dry_run=False,
+    resume_from_dry_run=False,
+    dry_run_save_dir=None,
+):
+    if dry_run and resume_from_dry_run:
+        raise ValueError(
+            "The `dry_run` and `resume_from_dry_run` flags cannot be both set to True."
+        )
+    if dry_run and not dry_run_save_dir:
+        raise ValueError("The `dry_run_save_dir` must be specified when `dry_run` is True.")
+
+    if resume_from_dry_run and not dry_run_save_dir:
+        raise ValueError(
+            "The `dry_run_save_dir` must be specified when `resume_from_dry_run` is True."
+        )
+
+
 def run(
     wandb_project_name,
     mlflow_experiment_name=None,
@@ -122,16 +149,33 @@ def run(
     exclude_metrics=None,
     resume_from_crash=False,
     dry_run=False,
+    resume_from_dry_run=False,
     dry_run_save_dir=None,
 ):
+    _validate_flags(dry_run, resume_from_dry_run, dry_run_save_dir)
     _setup_absl_logging(log_dir)
     start_time = time.time()
 
     os.environ["MLFLOW_VERBOSE"] = str(verbose)
 
-    api = wandb.Api()
+    if resume_from_dry_run:
+        if not dry_run_save_dir:
+            raise ValueError(
+                "The `dry_run_save_dir` must be specified when `resume_from_dry_run` is True."
+            )
+        mlflow_experiment_name = mlflow_experiment_name or wandb_project_name
+        mlflow_experiment_path = Path(dry_run_save_dir) / mlflow_experiment_name
+        runs = []
+        for child_dir in mlflow_experiment_path.iterdir():
+            # iterdir() only lists the top-level contents
+            if not child_dir.is_dir():
+                continue
+            runs.append(RunReadHandler(child_dir))
+    else:
+        api = wandb.Api()
+        wandb_project = api.project(name=wandb_project_name, entity="mosaic-ml")
+        runs = api.runs(path=f"mosaic-ml/{wandb_project.name}")
 
-    wandb_project = api.project(name=wandb_project_name, entity="mosaic-ml")
     mlflow_experiment = None
     if resume_from_crash:
         crash_handler = CrashHandler(
@@ -148,8 +192,6 @@ def run(
             dry_run=dry_run,
             dry_run_save_dir=dry_run_save_dir,
         )
-
-    runs = api.runs(path=f"mosaic-ml/{wandb_project.name}")
 
     if not dry_run:
         async_pool_logging_stop_event = threading.Event()
@@ -190,20 +232,29 @@ def run(
             set_mlflow_tags(tags, dry_run=dry_run, dry_run_save_dir=mlflow_run)
 
             client = mlflow.MlflowClient()
-            convert_wandb_config_to_mlflow_params(run, dry_run=dry_run, dry_run_save_dir=mlflow_run)
+            convert_wandb_config_to_mlflow_params(
+                run,
+                dry_run=dry_run,
+                resume_from_dry_run=resume_from_dry_run,
+                dry_run_save_dir=mlflow_run,
+            )
+            logging.info(f"Starting converting system metrics for {run.name}...")
             convert_wandb_system_metrics_to_mlflow(
                 run,
                 client,
                 mlflow_run,
                 dry_run=dry_run,
+                resume_from_dry_run=resume_from_dry_run,
                 dry_run_save_dir=mlflow_run,
             )
-            convert_wandb_experiment_metrics_to_mlflow(
+            logging.info(f"Starting converting metrics for {run.name}...")
+            convert_wandb_metrics_to_mlflow(
                 run,
                 client,
                 mlflow_run,
                 exclude_metrics=exclude_metrics,
                 dry_run=dry_run,
+                resume_from_dry_run=resume_from_dry_run,
                 dry_run_save_dir=mlflow_run,
             )
 
@@ -233,6 +284,8 @@ def run(
 
 
 def launch(_):
+    if not FLAGS.resume_from_dry_run:
+        wandb.login()
     if not FLAGS.dry_run:
         mlflow.login()
     run(
@@ -244,12 +297,13 @@ def launch(_):
         FLAGS.exclude_metrics,
         FLAGS.resume_from_crash,
         FLAGS.dry_run,
+        FLAGS.resume_from_dry_run,
         FLAGS.dry_run_save_dir,
     )
 
 
 def main():
-    wandb.login()
+    flags.mark_flag_as_required("wandb_project_name")
     app.run(launch)
 
 

@@ -57,7 +57,21 @@ def _convert_gpu_metrics_to_mlflow(row, step):
     return metrics
 
 
-def convert_wandb_system_metrics_to_mlflow(
+def _convert_wandb_system_metrics_to_mlflow_from_file(wandb_run, mlflow_client, mlflow_run):
+    mlflow_system_metrics = []
+    mlflow_run_id = mlflow_run.info.run_id
+    for metrics in wandb_run.read_system_metrics():
+        if (len(mlflow_system_metrics) + len(metrics)) >= MLFLOW_MAXIMUM_METRICS_PER_BATCH:
+            mlflow_client.log_batch(mlflow_run_id, metrics=mlflow_system_metrics, synchronous=False)
+            mlflow_system_metrics = metrics
+        else:
+            mlflow_system_metrics.extend(metrics)
+
+    # Clear up the leftovers.
+    mlflow_client.log_batch(mlflow_run_id, metrics=mlflow_system_metrics, synchronous=False)
+
+
+def _convert_wandb_system_metrics_to_mlflow_from_server(
     wandb_run,
     mlflow_client,
     mlflow_run,
@@ -82,6 +96,7 @@ def convert_wandb_system_metrics_to_mlflow(
     batch_count = 0
 
     if dry_run:
+        file_handlers = {}
         system_metrics_path = dry_run_save_dir / "system_metrics"
         system_metrics_path.mkdir(parents=True, exist_ok=True)
 
@@ -98,11 +113,7 @@ def convert_wandb_system_metrics_to_mlflow(
         if metrics_count >= MLFLOW_MAXIMUM_METRICS_PER_BATCH:
             # Trigger logging when we reach the maximum metrics allowed per batch.
             if dry_run:
-                log_metrics_dry_run(
-                    mlflow_system_metrics,
-                    system_metrics_path,
-                    index=batch_count,
-                )
+                log_metrics_dry_run(mlflow_system_metrics, system_metrics_path, file_handlers)
             else:
                 mlflow_client.log_batch(
                     mlflow_run_id, metrics=mlflow_system_metrics, synchronous=False
@@ -114,10 +125,44 @@ def convert_wandb_system_metrics_to_mlflow(
 
     # Clear up leftovers.
     if dry_run:
-        log_metrics_dry_run(
-            mlflow_system_metrics,
-            system_metrics_path,
-            index=batch_count,
-        )
+        log_metrics_dry_run(mlflow_system_metrics, system_metrics_path, file_handlers)
     else:
         mlflow_client.log_batch(mlflow_run_id, metrics=mlflow_system_metrics, synchronous=False)
+
+
+def convert_wandb_system_metrics_to_mlflow(
+    wandb_run,
+    mlflow_client,
+    mlflow_run,
+    dry_run=False,
+    resume_from_dry_run=False,
+    dry_run_save_dir=None,
+):
+    """Convert Wandb system metrics to MLflow.
+
+    This function converts Wandb system metrics for the given `wandb_run` to MLflow system metrics,
+    and log to the MLflow run with ID `mlflow_run_id`. All logging happens asynchronously. This
+    function has 3 modes:
+        1. Normal mode (default): read metrics from wandb server and directly write to MLflow.
+        2. Dry run mode (dry_run=True): read metrics from wandb server and write to files.
+        3. Resume from dry run mode (resume_from_dry_run=True): read metrics from files and write to
+            MLflow.
+
+    Args:
+        wandb_run (wandb.sdk.wandb_run.Run): The Wandb run object.
+        mlflow_client (mlflow.client.MlflowClient): The MLflow client.
+        mlflow_run (mlflow.entities.Run): The MLflow run object.
+        dry_run (bool): Whether to run in dry run mode.
+        resume_from_dry_run (bool): Whether to resume from dry run mode.
+        dry_run_save_dir (pathlib.Path): The directory to save the metrics.
+    """
+    if resume_from_dry_run:
+        _convert_wandb_system_metrics_to_mlflow_from_file(wandb_run, mlflow_client, mlflow_run)
+    else:
+        _convert_wandb_system_metrics_to_mlflow_from_server(
+            wandb_run,
+            mlflow_client,
+            mlflow_run,
+            dry_run=dry_run,
+            dry_run_save_dir=dry_run_save_dir,
+        )
