@@ -38,8 +38,10 @@ def _convert_wandb_metrics_to_mlflow_from_file(
             # Skip the metrics that are in the exclude list.
             continue
         if (len(mlflow_metrics) + len(metrics)) >= MLFLOW_MAXIMUM_METRICS_PER_BATCH:
+            space_left = MLFLOW_MAXIMUM_METRICS_PER_BATCH - len(mlflow_metrics)
+            mlflow_metrics.extend(metrics[:space_left])
             mlflow_client.log_batch(mlflow_run_id, metrics=mlflow_metrics, synchronous=False)
-            mlflow_metrics = metrics
+            mlflow_metrics = metrics[space_left:]
         else:
             mlflow_metrics.extend(metrics)
 

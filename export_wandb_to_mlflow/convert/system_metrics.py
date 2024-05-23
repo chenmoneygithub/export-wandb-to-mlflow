@@ -62,8 +62,10 @@ def _convert_wandb_system_metrics_to_mlflow_from_file(wandb_run, mlflow_client, 
     mlflow_run_id = mlflow_run.info.run_id
     for metrics in wandb_run.read_system_metrics():
         if (len(mlflow_system_metrics) + len(metrics)) >= MLFLOW_MAXIMUM_METRICS_PER_BATCH:
+            space_left = MLFLOW_MAXIMUM_METRICS_PER_BATCH - len(mlflow_system_metrics)
+            mlflow_system_metrics.extend(metrics[:space_left])
             mlflow_client.log_batch(mlflow_run_id, metrics=mlflow_system_metrics, synchronous=False)
-            mlflow_system_metrics = metrics
+            mlflow_system_metrics = metrics[space_left:]
         else:
             mlflow_system_metrics.extend(metrics)
 
