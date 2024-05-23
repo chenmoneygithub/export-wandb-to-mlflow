@@ -34,7 +34,7 @@ def _convert_wandb_metrics_to_mlflow_from_file(
     mlflow_metrics = []
     mlflow_run_id = mlflow_run.info.run_id
     for metrics in wandb_run.read_metrics():
-        if metrics[0].key in exclude_metrics:
+        if exclude_metrics and metrics[0].key in exclude_metrics:
             # Skip the metrics that are in the exclude list.
             continue
         if (len(mlflow_metrics) + len(metrics)) >= MLFLOW_MAXIMUM_METRICS_PER_BATCH:

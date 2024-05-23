@@ -1,6 +1,7 @@
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import mlflow
@@ -85,6 +86,13 @@ flags.DEFINE_string(
     "used.",
 )
 
+flags.DEFINE_integer(
+    "dry_run_thread_pool_size",
+    None,
+    "The size of threadpool to use in dry run mode. If None, the program doesn't use "
+    "multithreading in the dry run mode.",
+)
+
 
 FLAGS = flags.FLAGS
 
@@ -140,6 +148,73 @@ def _validate_flags(
         )
 
 
+def migrate_data(run, mlflow_experiment, exclude_metrics, dry_run, resume_from_dry_run):
+    logging.info(f"Starting processing wandb run: {run.name}.")
+    with start_mlflow_run(
+        run, dry_run=dry_run, dry_run_experiment_dir=mlflow_experiment
+    ) as mlflow_run:
+        if dry_run:
+            logging.info(
+                f"Migrating wandb run {run.name} to MLflow in dry run mode. The saved data "
+                f"is stored in {str(mlflow_run)}."
+            )
+        else:
+            logging.info(
+                f"Created Mlflow run: {mlflow_run.info.run_name} with id "
+                f"{mlflow_run.info.run_id}."
+            )
+        tags = {}
+        if getattr(run, "group", None):
+            # Add the wandb group to the mlflow run as a tag.
+            tags["run_group"] = run.group
+
+        tags["wandb_run_name"] = run.name
+        tags["wandb_run_id"] = run.id
+        set_mlflow_tags(tags, dry_run=dry_run, dry_run_save_dir=mlflow_run)
+
+        client = mlflow.MlflowClient()
+        convert_wandb_config_to_mlflow_params(
+            run,
+            dry_run=dry_run,
+            resume_from_dry_run=resume_from_dry_run,
+            dry_run_save_dir=mlflow_run,
+        )
+        logging.info(f"Starting converting system metrics for {run.name} (id: {run.id})...")
+        convert_wandb_system_metrics_to_mlflow(
+            run,
+            client,
+            mlflow_run,
+            dry_run=dry_run,
+            resume_from_dry_run=resume_from_dry_run,
+            dry_run_save_dir=mlflow_run,
+        )
+        logging.info(f"Starting converting metrics for {run.name} (id: {run.id})...")
+        convert_wandb_metrics_to_mlflow(
+            run,
+            client,
+            mlflow_run,
+            exclude_metrics=exclude_metrics,
+            dry_run=dry_run,
+            resume_from_dry_run=resume_from_dry_run,
+            dry_run_save_dir=mlflow_run,
+        )
+
+        if not dry_run:
+            logging.info(
+                "Done processing wandb data, now waiting for all data to be logged to MLflow "
+                f"for run: {run.name}."
+            )
+            mlflow.flush_async_logging()
+
+        # Set a tag to indicate that the migration is complete.
+        set_mlflow_tags(
+            {"wandb_migration_complete": True},
+            dry_run=dry_run,
+            dry_run_save_dir=mlflow_run,
+        )
+        logging.info(f"Finished processing run: {run.name}! Moving to the next run...")
+
+
 def run(
     wandb_project_name,
     mlflow_experiment_name=None,
@@ -151,6 +226,7 @@ def run(
     dry_run=False,
     resume_from_dry_run=False,
     dry_run_save_dir=None,
+    dry_run_thread_pool_size=None,
 ):
     _validate_flags(dry_run, resume_from_dry_run, dry_run_save_dir)
     _setup_absl_logging(log_dir)
@@ -192,6 +268,9 @@ def run(
             dry_run=dry_run,
             dry_run_save_dir=dry_run_save_dir,
         )
+    if dry_run and dry_run_thread_pool_size:
+        # In dry run mode, we can concurrently process request to speed up the process.
+        executor = ThreadPoolExecutor(max_workers=dry_run_thread_pool_size)
 
     if not dry_run:
         async_pool_logging_stop_event = threading.Event()
@@ -208,74 +287,24 @@ def run(
             )
             continue
 
-        logging.info(f"Starting processing wandb run: {run.name}.")
-        with start_mlflow_run(
-            run, dry_run=dry_run, dry_run_experiment_dir=mlflow_experiment
-        ) as mlflow_run:
-            if dry_run:
-                logging.info(
-                    f"Migrating wandb run {run.name} to MLflow in dry run mode. The saved data "
-                    f"is stored in {str(mlflow_run)}."
-                )
-            else:
-                logging.info(
-                    f"Created Mlflow run: {mlflow_run.info.run_name} with id "
-                    f"{mlflow_run.info.run_id}."
-                )
-            tags = {}
-            if getattr(run, "group", None):
-                # Add the wandb group to the mlflow run as a tag.
-                tags["run_group"] = run.group
-
-            tags["wandb_run_name"] = run.name
-            tags["wandb_run_id"] = run.id
-            set_mlflow_tags(tags, dry_run=dry_run, dry_run_save_dir=mlflow_run)
-
-            client = mlflow.MlflowClient()
-            convert_wandb_config_to_mlflow_params(
+        if dry_run and dry_run_thread_pool_size:
+            executor.submit(
+                migrate_data,
                 run,
-                dry_run=dry_run,
-                resume_from_dry_run=resume_from_dry_run,
-                dry_run_save_dir=mlflow_run,
+                mlflow_experiment,
+                exclude_metrics,
+                dry_run,
+                resume_from_dry_run,
             )
-            logging.info(f"Starting converting system metrics for {run.name}...")
-            convert_wandb_system_metrics_to_mlflow(
-                run,
-                client,
-                mlflow_run,
-                dry_run=dry_run,
-                resume_from_dry_run=resume_from_dry_run,
-                dry_run_save_dir=mlflow_run,
-            )
-            logging.info(f"Starting converting metrics for {run.name}...")
-            convert_wandb_metrics_to_mlflow(
-                run,
-                client,
-                mlflow_run,
-                exclude_metrics=exclude_metrics,
-                dry_run=dry_run,
-                resume_from_dry_run=resume_from_dry_run,
-                dry_run_save_dir=mlflow_run,
-            )
-
-            logging.info(
-                "Done processing wandb data, now waiting for all data to be logged to MLflow "
-                f"for run: {run.name}."
-            )
-            if not dry_run:
-                # Clear the async logging queue per 5 projects to avoid dead threadpool.
-                mlflow.flush_async_logging()
-            # Set a tag to indicate that the migration is complete.
-            set_mlflow_tags(
-                {"wandb_migration_complete": True},
-                dry_run=dry_run,
-                dry_run_save_dir=mlflow_run,
-            )
-            logging.info(f"Finished processing run: {run.name}! Moving to the next run...")
+        else:
+            migrate_data(run, mlflow_experiment, exclude_metrics, dry_run, resume_from_dry_run)
 
     if not dry_run:
         # Stop logging the async pool info.
         async_pool_logging_stop_event.set()
+
+    if dry_run and dry_run_thread_pool_size:
+        executor.shutdown(wait=True)
 
     end_time = time.time()
     logging.info(
@@ -299,6 +328,7 @@ def launch(_):
         FLAGS.dry_run,
         FLAGS.resume_from_dry_run,
         FLAGS.dry_run_save_dir,
+        FLAGS.dry_run_thread_pool_size,
     )
 
 

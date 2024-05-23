@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 
+from export_wandb_to_mlflow.config import MLFLOW_MAXIMUM_METRICS_PER_BATCH
 from mlflow.entities import Metric
 
 
@@ -122,6 +123,12 @@ class RunReadHandler:
         """Read system metrics and return a iterable generator."""
         yield from self._read_metrics(self._system_metrics_path)
 
+    def _cast_str_to_number(self, value):
+        try:
+            return int(value)
+        except ValueError:
+            return float(value)
+
     def _read_metrics(self, metrics_path):
         """Read Mlflow metrics from a file.
 
@@ -147,8 +154,13 @@ class RunReadHandler:
                 with csv_path.open(mode="r", newline="") as file:
                     reader = csv.reader(file, delimiter=",")
                     for row in reader:
-                        value = float(row[0]) if ("." in row[0] or "e" in row[0]) else int(row[0])
+                        value = self._cast_str_to_number(row[0])
                         timestamp = int(row[1].strip())
                         step = int(row[2].strip())
-                        metrics.append(Metric(key, value, timestamp, step))
+                        new_metric = Metric(key, value, timestamp, step)
+                        if len(metrics) > MLFLOW_MAXIMUM_METRICS_PER_BATCH:
+                            yield metrics
+                            metrics = [new_metric]
+                        else:
+                            metrics.append(new_metric)
                 yield metrics

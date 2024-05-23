@@ -105,7 +105,7 @@ def _convert_wandb_system_metrics_to_mlflow_from_server(
         non_gpu_metrics = []
         for mlflow_key, wandb_handler in _SYSTEM_METRICS_MAPPING.items():
             val = wandb_handler(row) if callable(wandb_handler) else row.get(wandb_handler, None)
-            if val:
+            if val and not isnan(val):
                 # Some system metrics in a row could be None, which are not logged to MLflow.
                 non_gpu_metrics.append(Metric(mlflow_key, val, index, index))
 
