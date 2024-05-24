@@ -3,10 +3,12 @@
 import csv
 import json
 import os
+from collections import deque
 from pathlib import Path
 
-from export_wandb_to_mlflow.config import MLFLOW_MAXIMUM_METRICS_PER_BATCH
 from mlflow.entities import Metric
+
+from export_wandb_to_mlflow.config import MLFLOW_MAXIMUM_METRICS_PER_BATCH
 
 
 def log_params_dry_run(params, dry_run_save_dir):
@@ -133,7 +135,8 @@ class RunReadHandler:
         """Read Mlflow metrics from a file.
 
         This function reads metrics from a file and returns them as a generator of Metric objects.
-        Users can iterate over the generator to get the metrics.
+        Users can iterate over the generator to get the metrics. To speed up the database i/o, we
+        are reading the metrics in batches and in a circular form.
 
         Args:
             metrics_path (pathlib.Path): The path to the directory containing the metrics.
@@ -141,7 +144,7 @@ class RunReadHandler:
         Returns:
             A generator of List of `mlflow.entities.Metric`.
         """
-
+        file_handlers_queue = deque()
         for root, dirs, files in os.walk(metrics_path):
             for file in files:
                 if not file.endswith(".csv"):
@@ -150,17 +153,30 @@ class RunReadHandler:
                 csv_path = Path(os.path.join(root, file))
                 relative_path = csv_path.relative_to(Path(metrics_path))
                 key = os.path.splitext(relative_path)[0]
-                metrics = []
-                with csv_path.open(mode="r", newline="") as file:
-                    reader = csv.reader(file, delimiter=",")
-                    for row in reader:
-                        value = self._cast_str_to_number(row[0])
-                        timestamp = int(row[1].strip())
-                        step = int(row[2].strip())
-                        new_metric = Metric(key, value, timestamp, step)
-                        if len(metrics) > MLFLOW_MAXIMUM_METRICS_PER_BATCH:
-                            yield metrics
-                            metrics = [new_metric]
-                        else:
-                            metrics.append(new_metric)
-                yield metrics
+
+                # Get file handlers for every metric file.
+                file_handler = csv_path.open(mode="r", newline="")
+                file_handlers_queue.append((key, file_handler))
+
+        def get_metrics_batch(file_handler):
+            reader = csv.reader(file_handler, delimiter=",")
+            metrics = []
+            for row in reader:
+                value = self._cast_str_to_number(row[0])
+                timestamp = int(row[1].strip())
+                step = int(row[2].strip())
+                metrics.append(Metric(key, value, timestamp, step))
+                if len(metrics) >= MLFLOW_MAXIMUM_METRICS_PER_BATCH:
+                    return metrics, False
+
+            return metrics, True
+
+        while file_handlers_queue:
+            key, file_handler = file_handlers_queue.popleft()
+
+            metrics, finished = get_metrics_batch(file_handler)
+            yield metrics
+            if finished:
+                file_handler.close()
+            else:
+                file_handlers_queue.append((key, file_handler))
