@@ -228,6 +228,7 @@ def run(
     dry_run_save_dir=None,
     dry_run_thread_pool_size=None,
 ):
+    """Main function to migrate wandb data to mlflow."""
     _validate_flags(dry_run, resume_from_dry_run, dry_run_save_dir)
     _setup_absl_logging(log_dir)
     start_time = time.time()
@@ -235,6 +236,8 @@ def run(
     os.environ["MLFLOW_VERBOSE"] = str(verbose)
 
     if resume_from_dry_run:
+        # When `resume_from_dry_run` is True, we need to read the data from the dry run directory.
+        # instead of wandb server.
         if not dry_run_save_dir:
             raise ValueError(
                 "The `dry_run_save_dir` must be specified when `resume_from_dry_run` is True."
@@ -248,12 +251,15 @@ def run(
                 continue
             runs.append(RunReadHandler(child_dir))
     else:
+        # When `resume_from_dry_run` is False, we need to read the data from wandb server.
         api = wandb.Api()
         wandb_project = api.project(name=wandb_project_name, entity="mosaic-ml")
         runs = api.runs(path=f"mosaic-ml/{wandb_project.name}")
 
     mlflow_experiment = None
     if resume_from_crash:
+        # If we are resuming from a crash, we need to delete the crashed runs and get the finished
+        # runs. We also need to set the mlflow experiment to the one that was used before the crash.
         crash_handler = CrashHandler(
             wandb_project_name,
             dry_run=dry_run,
@@ -262,6 +268,7 @@ def run(
         mlflow_experiment = crash_handler.mlflow_experiment
         crash_handler.delete_crashed_runs_and_get_finished_runs()
     else:
+        # If we are not resuming from a crash, we need to create a new mlflow experiment.
         mlflow_experiment = set_mlflow_experiment(
             wandb_project_name,
             mlflow_experiment_name,
@@ -273,6 +280,7 @@ def run(
         executor = ThreadPoolExecutor(max_workers=dry_run_thread_pool_size)
 
     if not dry_run:
+        # If not in dry run mode, start logging the MLflow async logging pool information.
         async_pool_logging_stop_event = threading.Event()
         _logging_async_pool_info(async_pool_logging_stop_event)
 
@@ -288,6 +296,7 @@ def run(
             continue
 
         if dry_run and dry_run_thread_pool_size:
+            # In dry run mode, we can concurrently process request to speed up the process.
             executor.submit(
                 migrate_data,
                 run,
@@ -297,10 +306,12 @@ def run(
                 resume_from_dry_run,
             )
         else:
+            # If not in dry run mode, process the runs sequentially because MLflow server
+            # cannot handle too many requests at the same time.
             migrate_data(run, mlflow_experiment, exclude_metrics, dry_run, resume_from_dry_run)
 
     if not dry_run:
-        # Stop logging the async pool info.
+        # Stop logging the MLflow async pool info.
         async_pool_logging_stop_event.set()
 
     if dry_run and dry_run_thread_pool_size:
