@@ -70,8 +70,8 @@ def set_mlflow_experiment(
         experiment_path = dry_run_save_dir / mlflow_experiment_name
         if experiment_path.exists():
             raise ValueError(
-                "The experiment path already exists, please remove it first or set "
-                "`resume_from_crash=True` if you are resuming from a previous crash."
+                f"The experiment path {experiment_path} already exists, please remove it first or "
+                "set `resume_from_crash=True` if you are resuming from a previous crash."
             )
         experiment_path.mkdir()
         experiment_tags = {
