@@ -97,6 +97,9 @@ def _convert_wandb_metrics_to_mlflow_from_server(
 
     if dry_run:
         log_metrics_dry_run(mlflow_metrics, metrics_path, file_handlers)
+        for handler in file_handlers.values():
+            # Close all file handlers.
+            handler.close()
     else:
         # Clear up leftovers.
         mlflow_client.log_batch(mlflow_run_id, metrics=mlflow_metrics, synchronous=False)

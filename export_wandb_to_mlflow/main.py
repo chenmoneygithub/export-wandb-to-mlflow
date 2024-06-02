@@ -199,7 +199,7 @@ def migrate_data(run, mlflow_experiment, exclude_metrics, dry_run, resume_from_d
             resume_from_dry_run=resume_from_dry_run,
             dry_run_save_dir=mlflow_run,
         )
-
+        logging.info(f"Done converting metrics for run: {run.name}!")
         if not dry_run:
             logging.info(
                 "Done processing wandb data, now waiting for all data to be logged to MLflow "
