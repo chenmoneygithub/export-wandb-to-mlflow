@@ -172,6 +172,7 @@ def migrate_data(run, mlflow_experiment, exclude_metrics, dry_run, resume_from_d
         tags["wandb_run_id"] = run.id
         set_mlflow_tags(tags, dry_run=dry_run, dry_run_save_dir=mlflow_run)
 
+        # client = None if dry_run else mlflow.MlflowClient()
         client = mlflow.MlflowClient()
         convert_wandb_config_to_mlflow_params(
             run,
