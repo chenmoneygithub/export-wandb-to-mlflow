@@ -52,7 +52,8 @@ def set_tags_dry_run(tags, dry_run_save_dir):
     """Set tags in dry run mode.
 
     This function sets tags in dry run mode. The tags are saved to a file in the directory specified
-    by `dry_run_save_dir`.
+    by `dry_run_save_dir`. This function doesn't use `a` mode because some cloud file systems don't
+    support appending to a file.
 
     Args:
         tags (dict): The tags to be set.
@@ -61,9 +62,20 @@ def set_tags_dry_run(tags, dry_run_save_dir):
     # Write the tags to file.
     tags_path = dry_run_save_dir / "tags.csv"
 
-    with tags_path.open("a") as f:
-        for key, value in tags.items():
-            f.write(f"{key}, {value}\n")
+    file_exists = tags_path.is_file()
+
+    if file_exists:
+        with tags_path.open("r", newline="") as file:
+            data = file.readlines()
+    else:
+        data = []
+
+    for key, value in tags.items():
+        data.append(f"{key}, {value}\n")
+
+    # Write the updated data back to the CSV file
+    with tags_path.open("w", newline="") as file:
+        file.writelines(data)
 
 
 def read_tags(tag_path):
