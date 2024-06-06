@@ -3,6 +3,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import re
 
 import mlflow
 import wandb
@@ -48,7 +49,7 @@ flags.DEFINE_list(
     "wandb_run_names",
     [],
     "The list of run names to migrate to MLflow. If specified, only the runs with the given names "
-    "will be migrated, otherwise all runs in the wandb project will be migrated.",
+    "will be migrated, otherwise all runs in the wandb project will be migrated. Support regex.",
 )
 
 flags.DEFINE_list(
@@ -215,6 +216,20 @@ def migrate_data(run, mlflow_experiment, exclude_metrics, dry_run, resume_from_d
         logging.info(f"Finished processing run: {run.name}! Moving to the next run...")
 
 
+def should_skip_run(run_name, target_wandb_run_names):
+    if not target_wandb_run_names:
+        return False
+    # Only migrate the runs specified in `wandb_run_names` if it is not empty.
+    for target_run_name in target_wandb_run_names:
+        if re.match(target_run_name, run_name):
+            return False
+    logging.info(
+        f"Skipping run {run_name} because it's not in the target runs to migrate. "
+        f"Target run names (regex supported): {target_wandb_run_names}."
+    )
+    return True
+
+
 def run(
     wandb_project_name,
     mlflow_experiment_name=None,
@@ -285,8 +300,7 @@ def run(
         _logging_async_pool_info(async_pool_logging_stop_event)
 
     for run in runs:
-        if wandb_run_names and run.name not in wandb_run_names:
-            # Only migrate the runs specified in `wandb_run_names` if it is not empty.
+        if should_skip_run(run.name, wandb_run_names):
             continue
         if resume_from_crash and run.id in crash_handler.finished_wandb_run_ids:
             # Skip the run that has been finished.

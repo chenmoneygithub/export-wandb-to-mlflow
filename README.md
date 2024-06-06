@@ -22,7 +22,6 @@ w2m --wandb_project_name="{your-wandb-project-name}" [Options]
 
 Available options are listed below:
 
-
 | Option                   | Type    | Explanation                                                                                                                                                                       |
 | :----------------------- | :------ | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | mlflow_experiment_name   | String  | Use the designated name as the MLflow experiment name, instead of automatically creating one.                                                                                     |
