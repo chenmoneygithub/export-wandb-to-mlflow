@@ -7,6 +7,7 @@ import re
 
 import mlflow
 import wandb
+from datetime import datetime
 from absl import app, flags, logging
 from mlflow.tracking import _get_store
 
@@ -78,6 +79,12 @@ flags.DEFINE_bool(
     False,
     "If True, the script will read the data from the dry run directory and migrate it to MLflow."
     "This is useful when you ran the script in dry run mode before to save data to some disk.",
+)
+
+flags.DEFINE_bool(
+    "resume_from_dry_run_orderd_by_creation_time",
+    False,
+    "If True, when migrating from dry run, the runs will be ordered by creation time.",
 )
 
 flags.DEFINE_string(
@@ -230,6 +237,16 @@ def should_skip_run(run_name, target_wandb_run_names):
     return True
 
 
+def sort_wandb_runs_by_time(runs_iterator):
+    """Sort the wandb runs by the creation time (descending order, latest first)."""
+    run_and_time = []
+    for run in runs_iterator:
+        run_and_time.append((datetime.fromisoformat(run.createdAt), run))
+
+    run_and_time = sorted(run_and_time, key=lambda x: x[0], reverse=True)
+    return list(map(lambda x: x[1], run_and_time))
+
+
 def run(
     wandb_project_name,
     mlflow_experiment_name=None,
@@ -240,6 +257,7 @@ def run(
     resume_from_crash=False,
     dry_run=False,
     resume_from_dry_run=False,
+    resume_from_dry_run_orderd_by_creation_time=False,
     dry_run_save_dir=None,
     dry_run_thread_pool_size=None,
 ):
@@ -265,6 +283,18 @@ def run(
             if not child_dir.is_dir():
                 continue
             runs.append(RunReadHandler(child_dir))
+        if resume_from_dry_run_orderd_by_creation_time:
+            # Sort the runs by creation time if `resume_from_dry_run_orderd_by_creation_time=True`.
+            api = wandb.Api()
+            wandb_project = api.project(name=wandb_project_name, entity="mosaic-ml")
+            wandb_runs = api.runs(path=f"mosaic-ml/{wandb_project.name}")
+            runs_dict = {run.id: run for run in runs}
+            ordered_wandb_runs = sort_wandb_runs_by_time(wandb_runs)
+            ordered_runs = []
+            for run in ordered_wandb_runs:
+                if run.id in runs_dict:
+                    ordered_runs.append(runs_dict[run.id])
+            runs = ordered_runs
     else:
         # When `resume_from_dry_run` is False, we need to read the data from wandb server.
         api = wandb.Api()
@@ -352,6 +382,7 @@ def launch(_):
         FLAGS.resume_from_crash,
         FLAGS.dry_run,
         FLAGS.resume_from_dry_run,
+        FLAGS.resume_from_dry_run_orderd_by_creation_time,
         FLAGS.dry_run_save_dir,
         FLAGS.dry_run_thread_pool_size,
     )
