@@ -238,12 +238,16 @@ def should_skip_run(run_name, target_wandb_run_names):
 
 
 def sort_wandb_runs_by_time(runs_iterator):
-    """Sort the wandb runs by the creation time (descending order, latest first)."""
+    """Sort the wandb runs by the creation time (ascending order, earliest first).
+
+    Sorting in ascending order is important because the first run written to mlflow will show up
+    at the bottom of the mlflow UI, and we want the latest runs to show on the top.
+    """
     run_and_time = []
     for run in runs_iterator:
         run_and_time.append((datetime.fromisoformat(run.createdAt), run))
 
-    run_and_time = sorted(run_and_time, key=lambda x: x[0], reverse=True)
+    run_and_time = sorted(run_and_time, key=lambda x: x[0])
     return list(map(lambda x: x[1], run_and_time))
 
 
