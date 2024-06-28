@@ -60,6 +60,12 @@ flags.DEFINE_list(
 )
 
 flags.DEFINE_bool(
+    "skip_existing_runs",
+    False,
+    "Skip the runs that have already been migrated.",
+)
+
+flags.DEFINE_bool(
     "resume_from_crash",
     False,
     "Indicate if this job is resuming from a crash. Migration script could crash in the middle, "
@@ -142,6 +148,8 @@ def _validate_flags(
     dry_run=False,
     resume_from_dry_run=False,
     dry_run_save_dir=None,
+    skip_existing_runs=False,
+    resume_from_crash=False,
 ):
     if dry_run and resume_from_dry_run:
         raise ValueError(
@@ -153,6 +161,10 @@ def _validate_flags(
     if resume_from_dry_run and not dry_run_save_dir:
         raise ValueError(
             "The `dry_run_save_dir` must be specified when `resume_from_dry_run` is True."
+        )
+    if skip_existing_runs and resume_from_crash:
+        raise ValueError(
+            "The `skip_existing_runs` and `resume_from_crash` flags cannot be both set to True."
         )
 
 
@@ -223,13 +235,22 @@ def migrate_data(run, mlflow_experiment, exclude_metrics, dry_run, resume_from_d
         logging.info(f"Finished processing run: {run.name}! Moving to the next run...")
 
 
-def should_skip_run(run_name, target_wandb_run_names):
+def should_skip_run(run, target_wandb_run_names, existing_runs, skip_existing_runs=True):
+    run_name = run.name
+    if skip_existing_runs and run.id in existing_runs:
+        logging.info(
+            f"Skipping run {run_name} because it already exists and you set "
+            "`skip_existing_runs=True`."
+        )
+        return True
+
     if not target_wandb_run_names:
         return False
-    # Only migrate the runs specified in `wandb_run_names` if it is not empty.
-    for target_run_name in target_wandb_run_names:
-        if re.match(target_run_name, run_name):
-            return False
+    if len(target_wandb_run_names) > 0:
+        # Only migrate the runs specified in `wandb_run_names` if it is not empty.
+        for target_run_name in target_wandb_run_names:
+            if re.match(target_run_name, run.name):
+                return False
     logging.info(
         f"Skipping run {run_name} because it's not in the target runs to migrate. "
         f"Target run names (regex supported): {target_wandb_run_names}."
@@ -251,6 +272,20 @@ def sort_wandb_runs_by_time(runs_iterator):
     return list(map(lambda x: x[1], run_and_time))
 
 
+def get_existing_runs(mlflow_experiment):
+    if isinstance(mlflow_experiment, Path):
+        existing_runs = []
+        for child_dir in mlflow_experiment.iterdir():
+            # iterdir() only lists the top-level contents
+            if not child_dir.is_dir():
+                continue
+            existing_runs.append(str(child_dir.relative_to(mlflow_experiment)))
+    else:
+        fetched_runs = mlflow.search_runs(experiment_ids=[mlflow_experiment])
+        existing_runs = fetched_runs["tags.wandb_run_id"].to_list()
+    return existing_runs
+
+
 def run(
     wandb_project_name,
     mlflow_experiment_name=None,
@@ -258,6 +293,7 @@ def run(
     log_dir=None,
     wandb_run_names=None,
     exclude_metrics=None,
+    skip_existing_runs=False,
     resume_from_crash=False,
     dry_run=False,
     resume_from_dry_run=False,
@@ -266,7 +302,13 @@ def run(
     dry_run_thread_pool_size=None,
 ):
     """Main function to migrate wandb data to mlflow."""
-    _validate_flags(dry_run, resume_from_dry_run, dry_run_save_dir)
+    _validate_flags(
+        dry_run,
+        resume_from_dry_run,
+        dry_run_save_dir,
+        skip_existing_runs,
+        resume_from_crash,
+    )
     _setup_absl_logging(log_dir)
     start_time = time.time()
 
@@ -323,7 +365,13 @@ def run(
             mlflow_experiment_name,
             dry_run=dry_run,
             dry_run_save_dir=dry_run_save_dir,
+            skip_existing_runs=skip_existing_runs,
         )
+    if skip_existing_runs:
+        existing_runs = get_existing_runs(mlflow_experiment)
+    else:
+        existing_runs = []
+
     if dry_run and dry_run_thread_pool_size:
         # In dry run mode, we can concurrently process request to speed up the process.
         executor = ThreadPoolExecutor(max_workers=dry_run_thread_pool_size)
@@ -334,7 +382,7 @@ def run(
         _logging_async_pool_info(async_pool_logging_stop_event)
 
     for run in runs:
-        if should_skip_run(run.name, wandb_run_names):
+        if should_skip_run(run, wandb_run_names, existing_runs, skip_existing_runs):
             continue
         if resume_from_crash and run.id in crash_handler.finished_wandb_run_ids:
             # Skip the run that has been finished.
@@ -383,6 +431,7 @@ def launch(_):
         FLAGS.log_dir,
         FLAGS.wandb_run_names,
         FLAGS.exclude_metrics,
+        FLAGS.skip_existing_runs,
         FLAGS.resume_from_crash,
         FLAGS.dry_run,
         FLAGS.resume_from_dry_run,

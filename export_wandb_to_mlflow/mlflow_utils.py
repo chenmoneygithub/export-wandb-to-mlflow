@@ -25,9 +25,10 @@ def _set_mlflow_experiment_on_tracking_server(wandb_project_name, mlflow_experim
             mlflow.set_experiment_tag("migrate_from_wandb_project", "True")
             mlflow.set_experiment_tag("wandb_project_name", wandb_project_name)
     else:
-        mlflow.set_experiment(f"/{mlflow_experiment_name}")
+        mlflow_experiment = mlflow.set_experiment(f"/{mlflow_experiment_name}")
         mlflow.set_experiment_tag("migrate_from_wandb_project", "True")
         mlflow.set_experiment_tag("wandb_project_name", wandb_project_name)
+    return mlflow_experiment.experiment_id
 
 
 def set_mlflow_experiment(
@@ -35,6 +36,7 @@ def set_mlflow_experiment(
     mlflow_experiment_name=None,
     dry_run=False,
     dry_run_save_dir=None,
+    skip_existing_runs=False,
 ):
     """Set MLflow experiment based on the Wandb project.
 
@@ -58,6 +60,7 @@ def set_mlflow_experiment(
         dry_run (bool): Whether to run in dry run mode.
         dry_run_save_dir (str, optional): The directory to save the data in dry run mode. If None,
             the current directory will be used.
+        skip_existing_runs (bool): Whether to skip existing runs.
     """
     if dry_run:
         current_path = Path.cwd()
@@ -69,10 +72,13 @@ def set_mlflow_experiment(
         mlflow_experiment_name = mlflow_experiment_name or wandb_project_name
         experiment_path = dry_run_save_dir / mlflow_experiment_name
         if experiment_path.exists():
-            raise ValueError(
-                f"The experiment path {experiment_path} already exists, please remove it first or "
-                "set `resume_from_crash=True` if you are resuming from a previous crash."
-            )
+            if skip_existing_runs:
+                return experiment_path
+            else:
+                raise ValueError(
+                    f"The experiment path {experiment_path} already exists, please remove it first "
+                    "or set `resume_from_crash=True` if you are resuming from a previous crash."
+                )
         experiment_path.mkdir()
         experiment_tags = {
             "migrate_from_wandb_project": True,
@@ -82,7 +88,7 @@ def set_mlflow_experiment(
         set_tags_dry_run(experiment_tags, experiment_path)
         return experiment_path
     else:
-        _set_mlflow_experiment_on_tracking_server(wandb_project_name, mlflow_experiment_name)
+        return _set_mlflow_experiment_on_tracking_server(wandb_project_name, mlflow_experiment_name)
 
 
 def set_mlflow_tags(tags, dry_run=False, dry_run_save_dir=None):
