@@ -107,6 +107,17 @@ flags.DEFINE_integer(
     "multithreading in the dry run mode.",
 )
 
+flags.DEFINE_bool(
+    "is_dual_writing_experiment",
+    False,
+    "If True, the project is potentially dual written to MLflow and wandb.",
+)
+
+flags.DEFINE_bool(
+    "skip_dual_writing_runs",
+    False,
+    "If True, the migration will skip runs that does dual writing to mlflow and wandb.",
+)
 
 FLAGS = flags.FLAGS
 
@@ -190,7 +201,8 @@ def migrate_data(run, mlflow_experiment, exclude_metrics, dry_run, resume_from_d
 
         tags["wandb_run_name"] = run.name
         tags["wandb_run_id"] = run.id
-        tags["wandb_run_created_at"] = run.createdAt
+        if run.createdAt:
+            tags["wandb_run_created_at"] = run.createdAt
         set_mlflow_tags(tags, dry_run=dry_run, dry_run_save_dir=mlflow_run)
 
         # client = None if dry_run else mlflow.MlflowClient()
@@ -236,7 +248,21 @@ def migrate_data(run, mlflow_experiment, exclude_metrics, dry_run, resume_from_d
         logging.info(f"Finished processing run: {run.name}! Moving to the next run...")
 
 
-def should_skip_run(run, target_wandb_run_names, existing_runs, skip_existing_runs=True):
+def get_dual_writing_mlflow_experiment_id(runs):
+    """Get the MLflow experiment ID that is being dual written to."""
+    for run in runs:
+        if "mlflow_experiment_id" in run.config:
+            return run.config["mlflow_experiment_id"]
+    return None
+
+
+def should_skip_run(
+    run,
+    target_wandb_run_names,
+    existing_runs,
+    skip_existing_runs=True,
+    skip_dual_writing_runs=False,
+):
     run_name = run.name
     if skip_existing_runs:
         if run.id in existing_runs:
@@ -245,13 +271,8 @@ def should_skip_run(run, target_wandb_run_names, existing_runs, skip_existing_ru
                 "`skip_existing_runs=True`."
             )
             return True
-        if "loggers" not in run.config:
-            logging.info(
-                f"Skipping run {run_name} because no logger informatin is found in the run. Most "
-                "likely the run crashed, and contains no useful information."
-            )
-            return True
-        if "mlflow" in run.config["loggers"]:
+    if skip_dual_writing_runs:
+        if "mlflow_experiment_id" in run.config or "mlflow" in run.config.get("loggers", {}):
             logging.info(
                 f"Skipping run {run_name} because it's already existing in MLflow due to dual "
                 "writing and you set `skip_existing_runs=True`."
@@ -318,6 +339,8 @@ def run(
     resume_from_dry_run_orderd_by_creation_time=False,
     dry_run_save_dir=None,
     dry_run_thread_pool_size=None,
+    is_dual_writing_experiment=False,
+    skip_dual_writing_runs=False,
 ):
     """Main function to migrate wandb data to mlflow."""
     _validate_flags(
@@ -340,7 +363,7 @@ def run(
                 "The `dry_run_save_dir` must be specified when `resume_from_dry_run` is True."
             )
         mlflow_experiment_name = mlflow_experiment_name or wandb_project_name
-        mlflow_experiment_path = Path(dry_run_save_dir) / mlflow_experiment_name
+        mlflow_experiment_path = Path(dry_run_save_dir) / wandb_project_name
         runs = []
         for child_dir in mlflow_experiment_path.iterdir():
             # iterdir() only lists the top-level contents
@@ -365,6 +388,23 @@ def run(
         wandb_project = api.project(name=wandb_project_name, entity="mosaic-ml")
         runs = api.runs(path=f"mosaic-ml/{wandb_project.name}")
 
+    if is_dual_writing_experiment:
+        dual_writing_mlflow_experiment_id = get_dual_writing_mlflow_experiment_id(runs)
+        if dual_writing_mlflow_experiment_id:
+            try:
+                existing_experiment = mlflow.get_experiment(dual_writing_mlflow_experiment_id)
+                logging.info(
+                    f"Found dual writing Mlflow experiment: {existing_experiment.name}. Only "
+                    f"non-existing runs will be migrated to {existing_experiment.name}."
+                )
+            except Exception:
+                raise ValueError(
+                    "Cannot find dual writing Mlflow experiment with "
+                    f"experiment_id={dual_writing_mlflow_experiment_id}. Please check if you are "
+                    "connecting to the right databricks workspace."
+                )
+    else:
+        dual_writing_mlflow_experiment_id = None
     mlflow_experiment = None
     if resume_from_crash:
         # If we are resuming from a crash, we need to delete the crashed runs and get the finished
@@ -384,6 +424,7 @@ def run(
             dry_run=dry_run,
             dry_run_save_dir=dry_run_save_dir,
             skip_existing_runs=skip_existing_runs,
+            dual_writing_mlflow_experiment_id=dual_writing_mlflow_experiment_id,
         )
     if skip_existing_runs:
         existing_runs = get_existing_runs(mlflow_experiment)
@@ -400,7 +441,13 @@ def run(
         _logging_async_pool_info(async_pool_logging_stop_event)
 
     for run in runs:
-        if should_skip_run(run, wandb_run_names, existing_runs, skip_existing_runs):
+        if should_skip_run(
+            run,
+            wandb_run_names,
+            existing_runs,
+            skip_existing_runs,
+            skip_dual_writing_runs,
+        ):
             continue
         if resume_from_crash and run.id in crash_handler.finished_wandb_run_ids:
             # Skip the run that has been finished.
@@ -456,6 +503,8 @@ def launch(_):
         FLAGS.resume_from_dry_run_orderd_by_creation_time,
         FLAGS.dry_run_save_dir,
         FLAGS.dry_run_thread_pool_size,
+        FLAGS.is_dual_writing_experiment,
+        FLAGS.skip_dual_writing_runs,
     )
 
 

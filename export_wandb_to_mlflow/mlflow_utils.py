@@ -11,9 +11,20 @@ def _set_mlflow_experiment_on_tracking_server(
     wandb_project_name,
     mlflow_experiment_name=None,
     skip_existing_runs=False,
+    dual_writing_mlflow_experiment_id=None,
 ):
     """Set MLflow experiment on the tracking server."""
     mlflow_experiment_name = mlflow_experiment_name or wandb_project_name
+    if dual_writing_mlflow_experiment_id:
+        mlflow.set_experiment(experiment_id=dual_writing_mlflow_experiment_id)
+        mlflow.set_experiment_tags(
+            {
+                "migrate_from_wandb_project": "True",
+                "dual_write_mlflow_wandb": "True",
+                "wandb_project_name": wandb_project_name,
+            }
+        )
+        return dual_writing_mlflow_experiment_id
 
     # Note that in Databricks workspace, MLflow experiment name is prefixed with `/`.
     mlflow_experiment = mlflow.get_experiment_by_name(f"/{mlflow_experiment_name}")
@@ -27,14 +38,22 @@ def _set_mlflow_experiment_on_tracking_server(
             # a few tags to indicate that this experiment has associated wandb project. (either
             # migrated from wandb or dual writed to wandb and mlflow)
             mlflow.set_experiment(f"/{mlflow_experiment_name}")
-            mlflow.set_experiment_tag("migrate_from_wandb_project", "True")
-            mlflow.set_experiment_tag("wandb_project_name", wandb_project_name)
+            mlflow.set_experiment_tags(
+                {
+                    "migrate_from_wandb_project": "True",
+                    "wandb_project_name": wandb_project_name,
+                }
+            )
         else:
             # The name has already been used on an MLflow experiment that is not created from wandb
             # migration, so we set the experiment name with a random suffix.
             mlflow.set_experiment(f"/{mlflow_experiment_name}_{uuid.uuid4().hex[:6]}")
-            mlflow.set_experiment_tag("migrate_from_wandb_project", "True")
-            mlflow.set_experiment_tag("wandb_project_name", wandb_project_name)
+            mlflow.set_experiment_tags(
+                {
+                    "migrate_from_wandb_project": "True",
+                    "wandb_project_name": wandb_project_name,
+                }
+            )
     else:
         mlflow_experiment = mlflow.set_experiment(f"/{mlflow_experiment_name}")
         mlflow.set_experiment_tag("migrate_from_wandb_project", "True")
@@ -48,6 +67,7 @@ def set_mlflow_experiment(
     dry_run=False,
     dry_run_save_dir=None,
     skip_existing_runs=False,
+    dual_writing_mlflow_experiment_id=None,
 ):
     """Set MLflow experiment based on the Wandb project.
 
@@ -72,6 +92,8 @@ def set_mlflow_experiment(
         dry_run_save_dir (str, optional): The directory to save the data in dry run mode. If None,
             the current directory will be used.
         skip_existing_runs (bool): Whether to skip existing runs.
+        dual_writing_mlflow_experiment_id (str, optional): The experiment ID of the MLflow
+            experiment that is being dual written to.
     """
     if dry_run:
         current_path = Path.cwd()
@@ -103,6 +125,7 @@ def set_mlflow_experiment(
             wandb_project_name,
             mlflow_experiment_name,
             skip_existing_runs,
+            dual_writing_mlflow_experiment_id,
         )
 
 

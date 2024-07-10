@@ -106,12 +106,17 @@ class RunReadHandler:
         self.tags = self.read_tags()
         self.id = self.tags["wandb_run_id"]
         self.name = self.tags["wandb_run_name"]
+        self.createdAt = self.tags.get("wandb_run_created_at", None)
         if "run_group" in self.tags:
             self.group = self.tags["run_group"]
 
         self._metrics_path = run_path / "metrics"
         self._system_metrics_path = run_path / "system_metrics"
         self._params_path = run_path / "params.json"
+
+    @property
+    def config(self):
+        return self.read_params()
 
     def read_params(self):
         """Read Mlflow parameters from a file.
