@@ -1,13 +1,13 @@
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
-import re
 
 import mlflow
 import wandb
-from datetime import datetime
 from absl import app, flags, logging
 from mlflow.tracking import _get_store
 
@@ -238,12 +238,25 @@ def migrate_data(run, mlflow_experiment, exclude_metrics, dry_run, resume_from_d
 
 def should_skip_run(run, target_wandb_run_names, existing_runs, skip_existing_runs=True):
     run_name = run.name
-    if skip_existing_runs and run.id in existing_runs:
-        logging.info(
-            f"Skipping run {run_name} because it already exists and you set "
-            "`skip_existing_runs=True`."
-        )
-        return True
+    if skip_existing_runs:
+        if run.id in existing_runs:
+            logging.info(
+                f"Skipping run {run_name} because it already exists and you set "
+                "`skip_existing_runs=True`."
+            )
+            return True
+        if "loggers" not in run.config:
+            logging.info(
+                f"Skipping run {run_name} because no logger informatin is found in the run. Most "
+                "likely the run crashed, and contains no useful information."
+            )
+            return True
+        if "mlflow" in run.config["loggers"]:
+            logging.info(
+                f"Skipping run {run_name} because it's already existing in MLflow due to dual "
+                "writing and you set `skip_existing_runs=True`."
+            )
+            return True
 
     if not target_wandb_run_names:
         return False
@@ -283,7 +296,11 @@ def get_existing_runs(mlflow_experiment):
             existing_runs.append(str(child_dir.relative_to(mlflow_experiment)))
     else:
         fetched_runs = mlflow.search_runs(experiment_ids=[mlflow_experiment])
-        existing_runs = fetched_runs["tags.wandb_run_id"].to_list()
+        existing_runs = (
+            fetched_runs["tags.wandb_run_id"].to_list()
+            if "tags.wandb_run_id" in fetched_runs.columns
+            else []
+        )
     return existing_runs
 
 

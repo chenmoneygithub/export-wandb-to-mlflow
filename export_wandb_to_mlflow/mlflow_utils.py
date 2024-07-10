@@ -7,7 +7,11 @@ import mlflow
 from export_wandb_to_mlflow.dry_run_utils import set_tags_dry_run
 
 
-def _set_mlflow_experiment_on_tracking_server(wandb_project_name, mlflow_experiment_name=None):
+def _set_mlflow_experiment_on_tracking_server(
+    wandb_project_name,
+    mlflow_experiment_name=None,
+    skip_existing_runs=False,
+):
     """Set MLflow experiment on the tracking server."""
     mlflow_experiment_name = mlflow_experiment_name or wandb_project_name
 
@@ -18,6 +22,13 @@ def _set_mlflow_experiment_on_tracking_server(wandb_project_name, mlflow_experim
             # Having tag `migrate_from_wandb_project` indicates that the MLflow experiment is
             # created from wandb project, so we reuse it.
             mlflow.set_experiment(f"/{mlflow_experiment_name}")
+        elif skip_existing_runs:
+            # When `skip_existing_runs` is True, we reuse the existing MLflow experiment, and add
+            # a few tags to indicate that this experiment has associated wandb project. (either
+            # migrated from wandb or dual writed to wandb and mlflow)
+            mlflow.set_experiment(f"/{mlflow_experiment_name}")
+            mlflow.set_experiment_tag("migrate_from_wandb_project", "True")
+            mlflow.set_experiment_tag("wandb_project_name", wandb_project_name)
         else:
             # The name has already been used on an MLflow experiment that is not created from wandb
             # migration, so we set the experiment name with a random suffix.
@@ -88,7 +99,11 @@ def set_mlflow_experiment(
         set_tags_dry_run(experiment_tags, experiment_path)
         return experiment_path
     else:
-        return _set_mlflow_experiment_on_tracking_server(wandb_project_name, mlflow_experiment_name)
+        return _set_mlflow_experiment_on_tracking_server(
+            wandb_project_name,
+            mlflow_experiment_name,
+            skip_existing_runs,
+        )
 
 
 def set_mlflow_tags(tags, dry_run=False, dry_run_save_dir=None):
