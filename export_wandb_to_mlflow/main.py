@@ -1,5 +1,4 @@
 import os
-import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -16,11 +15,19 @@ from export_wandb_to_mlflow.convert.params import convert_wandb_config_to_mlflow
 from export_wandb_to_mlflow.convert.system_metrics import convert_wandb_system_metrics_to_mlflow
 from export_wandb_to_mlflow.dry_run_utils import RunReadHandler
 from export_wandb_to_mlflow.mlflow_utils import (
+    get_existing_runs,
     set_mlflow_experiment,
     set_mlflow_tags,
+    should_skip_run,
     start_mlflow_run,
 )
 from export_wandb_to_mlflow.remedy.get_crash_state import CrashHandler
+
+flags.DEFINE_string(
+    "wandb_org_name",
+    None,
+    "The name of the wandb organization that the project belongs to.",
+)
 
 flags.DEFINE_string(
     "wandb_project_name",
@@ -38,12 +45,6 @@ flags.DEFINE_bool(
     "verbose",
     False,
     "Whether to enable verbose logging.",
-)
-
-flags.DEFINE_bool(
-    "use_nested_run",
-    False,
-    "Whether to use nested run to represent wandb group.",
 )
 
 flags.DEFINE_list(
@@ -248,49 +249,12 @@ def migrate_data(run, mlflow_experiment, exclude_metrics, dry_run, resume_from_d
         logging.info(f"Finished processing run: {run.name}! Moving to the next run...")
 
 
-def get_dual_writing_mlflow_experiment_id(runs):
+def _get_dual_writing_mlflow_experiment_id(runs):
     """Get the MLflow experiment ID that is being dual written to."""
     for run in runs:
         if "mlflow_experiment_id" in run.config:
             return run.config["mlflow_experiment_id"]
     return None
-
-
-def should_skip_run(
-    run,
-    target_wandb_run_names,
-    existing_runs,
-    skip_existing_runs=True,
-    skip_dual_writing_runs=False,
-):
-    run_name = run.name
-    if skip_existing_runs:
-        if run.id in existing_runs:
-            logging.info(
-                f"Skipping run {run_name} because it already exists and you set "
-                "`skip_existing_runs=True`."
-            )
-            return True
-    if skip_dual_writing_runs:
-        if "mlflow_experiment_id" in run.config or "mlflow" in run.config.get("loggers", {}):
-            logging.info(
-                f"Skipping run {run_name} because it's already existing in MLflow due to dual "
-                "writing and you set `skip_existing_runs=True`."
-            )
-            return True
-
-    if not target_wandb_run_names:
-        return False
-    if len(target_wandb_run_names) > 0:
-        # Only migrate the runs specified in `wandb_run_names` if it is not empty.
-        for target_run_name in target_wandb_run_names:
-            if re.match(target_run_name, run.name):
-                return False
-    logging.info(
-        f"Skipping run {run_name} because it's not in the target runs to migrate. "
-        f"Target run names (regex supported): {target_wandb_run_names}."
-    )
-    return True
 
 
 def sort_wandb_runs_by_time(runs_iterator):
@@ -307,25 +271,8 @@ def sort_wandb_runs_by_time(runs_iterator):
     return list(map(lambda x: x[1], run_and_time))
 
 
-def get_existing_runs(mlflow_experiment):
-    if isinstance(mlflow_experiment, Path):
-        existing_runs = []
-        for child_dir in mlflow_experiment.iterdir():
-            # iterdir() only lists the top-level contents
-            if not child_dir.is_dir():
-                continue
-            existing_runs.append(str(child_dir.relative_to(mlflow_experiment)))
-    else:
-        fetched_runs = mlflow.search_runs(experiment_ids=[mlflow_experiment])
-        existing_runs = (
-            fetched_runs["tags.wandb_run_id"].to_list()
-            if "tags.wandb_run_id" in fetched_runs.columns
-            else []
-        )
-    return existing_runs
-
-
 def run(
+    wandb_org_name,
     wandb_project_name,
     mlflow_experiment_name=None,
     verbose=False,
@@ -373,8 +320,8 @@ def run(
         if resume_from_dry_run_orderd_by_creation_time:
             # Sort the runs by creation time if `resume_from_dry_run_orderd_by_creation_time=True`.
             api = wandb.Api()
-            wandb_project = api.project(name=wandb_project_name, entity="mosaic-ml")
-            wandb_runs = api.runs(path=f"mosaic-ml/{wandb_project.name}")
+            wandb_project = api.project(name=wandb_project_name, entity=f"{wandb_org_name}")
+            wandb_runs = api.runs(path=f"{wandb_org_name}/{wandb_project.name}")
             runs_dict = {run.id: run for run in runs}
             ordered_wandb_runs = sort_wandb_runs_by_time(wandb_runs)
             ordered_runs = []
@@ -388,8 +335,11 @@ def run(
         wandb_project = api.project(name=wandb_project_name, entity="mosaic-ml")
         runs = api.runs(path=f"mosaic-ml/{wandb_project.name}")
 
-    if is_dual_writing_experiment:
-        dual_writing_mlflow_experiment_id = get_dual_writing_mlflow_experiment_id(runs)
+    if not dry_run and is_dual_writing_experiment:
+        # If the project is dual written to mlflow and wandb and the migration script is not run in
+        # dry run mode, we hook to the dual writing Mlflow experiment during to avoid creating
+        # duplicated runs.
+        dual_writing_mlflow_experiment_id = _get_dual_writing_mlflow_experiment_id(runs)
         if dual_writing_mlflow_experiment_id:
             try:
                 existing_experiment = mlflow.get_experiment(dual_writing_mlflow_experiment_id)
@@ -426,10 +376,8 @@ def run(
             skip_existing_runs=skip_existing_runs,
             dual_writing_mlflow_experiment_id=dual_writing_mlflow_experiment_id,
         )
-    if skip_existing_runs:
-        existing_runs = get_existing_runs(mlflow_experiment)
-    else:
-        existing_runs = []
+
+    existing_runs = get_existing_runs(mlflow_experiment) if skip_existing_runs else []
 
     if dry_run and dry_run_thread_pool_size:
         # In dry run mode, we can concurrently process request to speed up the process.
@@ -450,7 +398,7 @@ def run(
         ):
             continue
         if resume_from_crash and run.id in crash_handler.finished_wandb_run_ids:
-            # Skip the run that has been finished.
+            # Skip the run that has been finished in crash recovery mode.
             logging.info(
                 f"Skipping wandb run {run.name} of id {run.id} because it's already done.'"
             )
@@ -490,6 +438,7 @@ def launch(_):
     if not FLAGS.dry_run:
         mlflow.login()
     run(
+        FLAGS.wandb_org_name,
         FLAGS.wandb_project_name,
         FLAGS.mlflow_experiment_name,
         FLAGS.verbose,

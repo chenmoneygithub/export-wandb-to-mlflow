@@ -1,8 +1,10 @@
+import re
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
 import mlflow
+from absl import logging
 
 from export_wandb_to_mlflow.dry_run_utils import set_tags_dry_run
 
@@ -168,3 +170,90 @@ def start_mlflow_run(wandb_run, dry_run=False, dry_run_experiment_dir=None):
             )
         run_dir.mkdir()
         yield run_dir
+
+
+def get_existing_runs(mlflow_experiment):
+    """Get existing runs in the MLflow experiment.
+
+    This function is used to get existing runs in the MLflow experiment. It returns a list of wandb
+    run ids that already exist in dry run directory or MLflow experiment.
+
+    Args:
+        mlflow_experiment (str or pathlib.Path): The MLflow experiment ID or path to the experiment
+            directory created in the dry run mode.
+
+    Returns:
+        List[str]: A list of wandb run ids that already exist in the MLflow experiment.
+    """
+    if isinstance(mlflow_experiment, Path):
+        existing_runs = []
+        for child_dir in mlflow_experiment.iterdir():
+            # iterdir() only lists the top-level contents
+            if not child_dir.is_dir():
+                continue
+            existing_runs.append(str(child_dir.relative_to(mlflow_experiment)))
+    else:
+        fetched_runs = mlflow.search_runs(experiment_ids=[mlflow_experiment])
+        existing_runs = (
+            fetched_runs["tags.wandb_run_id"].to_list()
+            if "tags.wandb_run_id" in fetched_runs.columns
+            else []
+        )
+    return existing_runs
+
+
+def should_skip_run(
+    run,
+    target_wandb_run_names=None,
+    existing_runs=None,
+    skip_existing_runs=False,
+    skip_dual_writing_runs=False,
+):
+    """Check if the wandb run should be skipped.
+
+    There are three conditions to skip a run:
+        1. The run already exists in the MLflow experiment and user specifies to skip existing runs.
+        2. The run is already existing in MLflow due to dual writing and user specifies to skip dual
+            writing runs. This is different from 1, because existing runs can be created from
+            migration or other reasons.
+        3. The run is not in the target runs to migrate, if users specify target runs.
+
+    Args:
+        run (wandb.sdk.wandb_run.Run | CrashHandler): The Wandb run object or CrashHandler object
+            managing the run in dry run /resume from dry run mode.
+        target_wandb_run_names (List[str]): The list of target runs to migrate.
+        existing_runs (List[str]): The list of existing runs in the MLflow experiment.
+        skip_existing_runs (bool): Whether to skip existing runs.
+        skip_dual_writing_runs (bool): Whether to skip dual writing runs.
+
+    Returns:
+        bool: Whether to skip the run.
+    """
+    run_name = run.name
+    if skip_existing_runs:
+        if run.id in existing_runs:
+            logging.info(
+                f"Skipping run {run_name} because it already exists and you set "
+                "`skip_existing_runs=True`."
+            )
+            return True
+    if skip_dual_writing_runs:
+        if "mlflow_experiment_id" in run.config or "mlflow" in run.config.get("loggers", {}):
+            logging.info(
+                f"Skipping run {run_name} because it's already existing in MLflow due to dual "
+                "writing and you set `skip_existing_runs=True`."
+            )
+            return True
+
+    if not target_wandb_run_names:
+        return False
+    if len(target_wandb_run_names) > 0:
+        # Only migrate the runs specified in `wandb_run_names` if it is not empty.
+        for target_run_name in target_wandb_run_names:
+            if re.match(target_run_name, run.name):
+                return False
+    logging.info(
+        f"Skipping run {run_name} because it's not in the target runs to migrate. "
+        f"Target run names (regex supported): {target_wandb_run_names}."
+    )
+    return True
