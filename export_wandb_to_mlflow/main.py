@@ -336,9 +336,9 @@ def run(
         runs = api.runs(path=f"mosaic-ml/{wandb_project.name}")
 
     if not dry_run and is_dual_writing_experiment:
-        # If the project is dual written to mlflow and wandb and the migration script is not run in
-        # dry run mode, we hook to the dual writing Mlflow experiment during to avoid creating
-        # duplicated runs.
+        # If the project is dual written to mlflow and wandb, and if the migration script is not run
+        # in the dry run mode, we hook to the dual writing Mlflow experiment during to avoid
+        # creating duplicated runs.
         dual_writing_mlflow_experiment_id = _get_dual_writing_mlflow_experiment_id(runs)
         if dual_writing_mlflow_experiment_id:
             try:
