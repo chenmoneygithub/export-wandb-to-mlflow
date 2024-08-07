@@ -80,8 +80,8 @@ We encourage you set `dry_run_thread_pool_size` flag when using dry run mode, wh
 ### Data Import
 
 Once you are ready to import data saved earlier in dry run mode to MLflow, you can use `resume_from_dry_run=True` to tell
-the migration script to do the job. Assume your data is saved in `./migrations` as you followed the example above, you can
-run the command below:
+the migration script to do the job. Assume your wandb project data is saved in `./migrations` as you followed the example
+above, you can run the command below:
 
 ```shell
 w2m --wandb_project_name="test-llama3" --resume_from_dry_run=True --dry_run_save_dir="./migrations"
